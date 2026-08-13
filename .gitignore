@@ -1,0 +1,30 @@
+# Build and Cache
+node_modules/
+dist/
+dist-ssr/
+target/
+src-tauri/target/
+src-tauri/gen/
+target_tmp/
+cargo_target_tmp/
+.venv/
+.artifacts/
+.idea/
+.vscode/
+
+# Binaries and Logs
+*.exe
+*.apk
+*.pdb
+*.lib
+*.dll
+*.rlib
+*.log
+adb_log.txt
+run_log.txt
+cargo_run_out.txt
+tauri_run_log.txt
+
+# Local Env
+*.local
+.DS_Store

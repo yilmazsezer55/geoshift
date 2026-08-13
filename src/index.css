@@ -1,0 +1,242 @@
+/* Modern Design System - GeoShift Premium */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Core Palette */
+  --primary: #4f46e5;
+  --primary-dark: #4338ca;
+  --primary-light: #818cf8;
+  --primary-bg: rgba(79, 70, 229, 0.08);
+
+  --secondary: #0ea5e9;
+  --accent: #f43f5e;
+
+  --bg-primary: #fcfdfe;
+  --bg-secondary: #ffffff;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --border: rgba(226, 232, 240, 0.8);
+  --border-light: #f1f5f9;
+
+  /* Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.5);
+
+  /* Elevation */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --floating-shadow: 0 20px 40px rgba(15, 23, 42, 0.15);
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-btn: 12px;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+#root { display: flex; flex-direction: column; }
+
+.app-container {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Splash Logic */
+.app-splash-active .app-container { visibility: hidden; }
+.app-splash-visible {
+  position: fixed; inset: 0; z-index: 99999;
+  display: flex; alignItems: center; justifyContent: center;
+  background: var(--bg-primary);
+}
+
+/* Custom Titlebar */
+.custom-titlebar {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.05); /* Very transparent */
+  backdrop-filter: blur(15px); /* Strong glass effect */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  -webkit-app-region: drag;
+  z-index: 10000;
+  position: absolute; /* Overlay on top of content */
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.titlebar-controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+
+.titlebar-btn {
+  background: transparent; border: none;
+  width: 38px; height: 38px; border-radius: 10px;
+  cursor: pointer; display: flex; align-items: center;
+  justify-content: center; color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.titlebar-btn:hover { background: var(--border-light); color: var(--text-primary); }
+.titlebar-btn.close:hover { background: #ef4444; color: white; }
+
+/* Unified Floating Panel */
+.floating-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.floating-search { position: absolute; top: 72px; left: 20px; width: 360px; z-index: 3100; }
+.floating-modes { position: absolute; top: 72px; right: 20px; display: flex; gap: 10px; padding: 6px; z-index: 3000; }
+.floating-sidebar { position: absolute; top: 140px; left: 20px; bottom: 20px; width: 360px; z-index: 3000; display: flex; flex-direction: column; transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1); }
+.floating-sidebar.collapsed { transform: translateX(-400px); }
+.floating-utils { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 3000; }
+
+.floating-right-panel {
+  position: absolute;
+  top: 72px;
+  right: 80px;
+  width: 280px; /* Reduced width */
+  max-height: calc(100vh - 120px);
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Buttons */
+.btn {
+  padding: 10px 20px; border-radius: var(--radius-btn);
+  border: none; font-weight: 700; cursor: pointer;
+  display: inline-flex; align-items: center;
+  justify-content: center; gap: 8px; transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px); box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4);
+}
+
+.btn-secondary {
+  background: white; border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover { background: var(--border-light); border-color: var(--text-muted); }
+
+.btn-icon {
+  width: 48px; height: 48px; border-radius: var(--radius-btn);
+  background: white; border: 1px solid var(--border);
+  color: var(--text-secondary); display: flex; align-items: center;
+  justify-content: center; cursor: pointer; transition: all 0.2s ease;
+}
+
+.btn-icon:hover {
+  border-color: var(--primary); color: var(--primary); background: var(--primary-bg);
+  transform: translateY(-1px); box-shadow: var(--shadow-md);
+}
+
+.btn-icon.active {
+  background: var(--primary); color: white !important; border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+/* Sidebar Elements */
+.collapse-toggle {
+  position: absolute; top: 50%; right: -32px;
+  transform: translateY(-50%); width: 32px; height: 64px;
+  background: white; border: 1px solid var(--border);
+  border-left: none; border-radius: 0 12px 12px 0;
+  display: flex; align-items: center; justifyContent: center;
+  cursor: pointer; color: var(--primary); box-shadow: 4px 0 10px rgba(0,0,0,0.05);
+}
+
+/* Input Fields */
+.input {
+  width: 100%; padding: 12px 16px; border-radius: var(--radius-btn);
+  border: 1px solid var(--border); background: #f8fafc;
+  outline: none; transition: border-color 0.2s;
+}
+
+.input:focus { border-color: var(--primary); background: white; }
+
+/* Utilities */
+.search-result-item:hover {
+  background: var(--primary-bg);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.search-clear-btn:hover {
+  background: #f1f5f9;
+  color: var(--error);
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.fade-in { animation: fadeIn 0.3s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Leaflet Overrides */
+.leaflet-container { width: 100%; height: 100%; background: #f1f5f9; z-index: 1; }
