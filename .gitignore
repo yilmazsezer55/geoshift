@@ -14,6 +14,8 @@ cargo_target_tmp/
 
 # Binaries and Logs
 *.exe
+# Allow our specific helper APK, ignore others
+!resources/settings_apk-debug.apk
 *.apk
 *.pdb
 *.lib
