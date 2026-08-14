@@ -263,8 +263,9 @@ export default function Map({
                             {searchResults.map((r, i) => (
                                 <div key={i} onClick={() => {
                                     onLocationSelect({ latitude: parseFloat(r.lat), longitude: parseFloat(r.lon) }, 'end', r.display_name);
-                                    setSearchQuery(r.display_name);
+                                    setSearchQuery('');
                                     setShowResults(false);
+                                    setSearchResults([]);
                                 }} style={{ padding: '12px', cursor: 'pointer', borderRadius: '8px', fontSize: '0.85rem', color: '#1e293b' }} className="search-result-item">
                                     {r.display_name}
                                 </div>

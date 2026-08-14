@@ -154,14 +154,13 @@ export default function LocationControls({
             <div style={{ flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 {mode === 'teleport' && (
                     <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        {/* Mevcut Konum Bölümü */}
                         <div style={{ padding: '16px', background: 'rgba(59, 130, 246, 0.05)', borderRadius: '12px', border: '1px solid rgba(59, 130, 246, 0.1)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                                 <div style={{ width: '8px', height: '8px', background: '#3b82f6', borderRadius: '50%' }} />
                                 <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase' }}>Mevcut Konum</span>
                             </div>
                             <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                {currentLocation ? currentAddress : 'Cihaz Bağlı Değil'}
+                                {currentLocation ? currentAddress : (selectedDevice ? 'Konum Henüz Başlatılmadı' : 'Cihaz Bağlı Değil')}
                             </div>
                         </div>
 
@@ -231,6 +230,10 @@ export default function LocationControls({
                         <span>Tahmini Varış:</span>
                         <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{distanceInfo.time}</span>
                     </div>
+                </div>
+
+                <div style={{ marginTop: '12px', textAlign: 'center', opacity: 0.5 }}>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-muted)' }}>GeoShift v0.1.0</span>
                 </div>
 
             </div>
