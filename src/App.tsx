@@ -10,6 +10,7 @@ import LocationControls from './components/LocationControls';
 import Splash from './components/Splash';
 import IOSConnectionWizard from './components/IOSConnectionWizard';
 import AndroidConnectionWizard from './components/AndroidConnectionWizard';
+import LegalDisclaimer from './components/LegalDisclaimer';
 import logo from './assets/logo.png';
 import {
   ChevronLeft,
@@ -142,6 +143,10 @@ function App() {
   const [showAndroidWizard, setShowAndroidWizard] = useState(false);
   const [wizardDevice, setWizardDevice] = useState<Device | null>(null);
   const [initialWizardStep, setInitialWizardStep] = useState<string | undefined>(undefined);
+
+  const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState<boolean>(() => {
+    return localStorage.getItem('geoshift_disclaimer_accepted') === 'true';
+  });
 
   useEffect(() => {
     const root = document.getElementById('root');
@@ -592,6 +597,11 @@ function App() {
     setWizardDevice(null);
   };
 
+  const handleAcceptDisclaimer = () => {
+    localStorage.setItem('geoshift_disclaimer_accepted', 'true');
+    setHasAcceptedDisclaimer(true);
+  };
+
 
   // Konumu değiştir (Teleport)
   const changeLocation = async () => {
@@ -781,6 +791,10 @@ function App() {
     <>
       {showSplash && <Splash onFinish={() => setShowSplash(false)} />}
 
+      {!showSplash && !hasAcceptedDisclaimer && (
+        <LegalDisclaimer onAccept={handleAcceptDisclaimer} />
+      )}
+
       {/* iOS Connection Wizard */}
       {showIOSWizard && wizardDevice && (
         <IOSConnectionWizard
@@ -808,17 +822,16 @@ function App() {
         />
       )}
 
-      {!showSplash && (
-        <div className="app-container" style={{
-          height: '100%',
-          width: '100%',
-          overflow: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-          position: 'relative',
-          borderRadius: 'var(--radius-lg)',
-          background: 'var(--bg-primary)'
-        }}>
+      <div className={`app-container ${showSplash ? 'app-splash-active' : ''}`} style={{
+        height: '100%',
+        width: '100%',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        borderRadius: 'var(--radius-lg)',
+        background: 'var(--bg-primary)'
+      }}>
           <CustomTitlebar setMessage={setMessage} />
 
           {/* Message Banner (Toast) */}
@@ -1029,7 +1042,6 @@ function App() {
             )}
           </div>
         </div>
-      )}
     </>
   );
 }

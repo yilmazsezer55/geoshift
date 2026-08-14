@@ -72,11 +72,14 @@ html, body, #root {
 }
 
 /* Splash Logic */
-.app-splash-active .app-container { visibility: hidden; }
+.app-container.app-splash-active {
+  filter: blur(8px);
+  pointer-events: none;
+}
 .app-splash-visible {
-  position: fixed; inset: 0; z-index: 99999;
-  display: flex; alignItems: center; justifyContent: center;
-  background: var(--bg-primary);
+  position: fixed; inset: 0; z-index: 100000;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent;
 }
 
 /* Custom Titlebar */
