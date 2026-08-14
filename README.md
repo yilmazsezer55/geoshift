@@ -10,7 +10,22 @@
 
 GeoShift, iMyFone AnyTo ve Tenorshare iAnyGo benzeri, hem **iOS** hem de **Android** cihazlar için geliştirilmiş modern ve yüksek performanslı bir GPS konum simülasyon uygulamasıdır.
 
-![GeoShift Uygulama Ekranı](public/screenshot.png)
+## 📸 Uygulama Ekran Görüntüleri
+
+<p align="center">
+  <img src="public/screenshots/01_device_connection.png" width="45%" alt="Cihaz Bağlantısı">
+  <img src="public/screenshots/02_android_guide.png" width="45%" alt="Android Bağlantı Rehberi">
+</p>
+
+<p align="center">
+  <img src="public/screenshots/03_ios_wizard.png" width="45%" alt="iOS Bağlantı Sihirbazı">
+  <img src="public/screenshots/04_device_management.png" width="45%" alt="Cihaz Yönetimi">
+</p>
+
+<p align="center">
+  <img src="public/screenshots/05_main_map.png" width="45%" alt="Ana Harita">
+  <img src="public/screenshots/06_search.png" width="45%" alt="Konum Arama">
+</p>
 
 ## ✨ Öne Çıkan Özellikler
 
