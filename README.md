@@ -1,99 +1,72 @@
-# 📱 GPS Konum Değiştirme Uygulaması
+# 📱 GeoShift - iOS & Android Konum Değiştirme
 
-iMyFone AnyTo benzeri, iOS ve Android cihazlar için GPS konum değiştirme desktop uygulaması.
-
-## ✨ Özellikler
-
-- 🗺️ **İnteraktif Harita** - Leaflet harita üzerinde konum seçimi
-- 📱 **Android Desteği** - ADB üzerinden mock location
-- 🍎 **iOS Desteği** - Developer Mode ile konum değiştirme (yakında)
-- 🎨 **Modern UI** - Dark mode, glassmorphism, smooth animasyonlar
-- ⚡ **Performanslı** - Tauri ile native performans
-
-## 🚀 Kurulum
-
-### Gereksinimler
-
-1. **Node.js** (v18 veya üzeri)
-2. **Rust** (https://rustup.rs/)
-3. **ADB** (Android Debug Bridge)
-   - Windows: `choco install adb` veya Android SDK Platform Tools
-   - ADB'nin PATH'de olduğundan emin olun
-
-### Proje Kurulumu
-
-```bash
-# Bağımlılıkları yükle
-npm install
-
-# Geliştirme modunda çalıştır
-npm run tauri dev
-
-# Production build
-npm run tauri build
-```
-
-## 📖 Kullanım
-
-### Android Cihaz Hazırlığı
-
-1. **Developer Options'ı Aktifleştir:**
-   - Ayarlar → Telefon Hakkında → Yapı Numarası'na 7 kez tıkla
-
-2. **USB Debugging'i Aç:**
-   - Ayarlar → Geliştirici Seçenekleri → USB Debugging ✓
-
-3. **Mock Location Uygulaması Seç:**
-   - Geliştirici Seçenekleri → Mock Location App → Bu uygulamayı seç
-
-4. **Cihazı Bağla:**
-   - USB kablosu ile bilgisayara bağla
-   - "USB Debugging'e izin ver" onayını kabul et
-
-### Uygulama Kullanımı
-
-1. **Cihazları Tara** butonuna tıkla
-2. Sol panelden cihazını seç
-3. Haritadan konum seç (tıklayarak)
-4. **Konumu Değiştir** butonuna tıkla
-5. Cihazında Google Maps açıp konumun değiştiğini kontrol et
-
-## 🛠️ Teknoloji Stack
-
-- **Frontend:** React + TypeScript + Vite
-- **Backend:** Rust + Tauri
-- **Harita:** Leaflet + React Leaflet
-- **Styling:** Vanilla CSS (Modern Design System)
-- **ADB:** adb_client crate
-
-## ⚠️ Önemli Notlar
-
-- Bu uygulama **sadece test ve geliştirme amaçlı** kullanılmalıdır
-- Android cihazda **Developer Options** ve **USB Debugging** aktif olmalı
-- iOS desteği için **Developer Mode** gereklidir (henüz implementasyonda)
-- Bazı uygulamalar konum doğrulama mekanizmaları kullanabilir
-
-## 🔜 Gelecek Özellikler
-
-- [ ] iOS tam desteği (libimobiledevice entegrasyonu)
-- [ ] Hareket simülasyon modları:
-  - [ ] Teleport Mode (anında konum değiştirme)
-  - [ ] Two-Point Mode (iki nokta arası hareket)
-  - [ ] Multi-Point Mode (çoklu nokta rotası)
-  - [ ] Joystick Mode (manuel kontrol)
-- [ ] GPX dosya import/export
-- [ ] Favori konumlar
-- [ ] Hız ayarları (yürüme/bisiklet/araba)
-
-## 📝 Lisans
-
-Bu proje eğitim ve test amaçlıdır.
-
-## 🤝 Katkıda Bulunma
-
-Pull request'ler memnuniyetle karşılanır!
+<p align="center">
+  <img src="public/logo.png" width="128" alt="GeoShift Logo">
+  <br>
+  <b>Fiziksel cihazlarınızın GPS konumunu masaüstünden anlık olarak değiştirin.</b>
+</p>
 
 ---
 
-**Geliştirici:** Yılmaz Sezer  
-**Tarih:** 2026
+GeoShift, iMyFone AnyTo ve Tenorshare iAnyGo benzeri, hem **iOS** hem de **Android** cihazlar için geliştirilmiş modern ve yüksek performanslı bir GPS konum simülasyon uygulamasıdır.
+
+![GeoShift Uygulama Ekranı](public/screenshot.png)
+
+## ✨ Öne Çıkan Özellikler
+
+- 🌍 **Evrensel Destek:** iOS 17+ (Tünel modu dahil) ve tüm Android sürümleriyle tam uyumlu.
+- 🗺️ **İnteraktif Harita:** Leaflet tabanlı akıcı harita üzerinden nokta atışı konum seçimi.
+- 🚀 **Anında Işınlanma:** Tek tıkla dünyanın herhangi bir noktasına fiziksel konum gönderimi.
+- 🔌 **Otomatik Kurulum:** Android için gerekli yardımcı servisleri (Appium Settings) tek tıkla otomatik kurar.
+- 🛠️ **Akıllı Teşhis:** Cihaz bağlantı sorunlarını, yetki eksikliklerini ve geliştirici modu durumlarını anında tespit eder.
+- 🎨 **Modern Arayüz:** Glassmorphism tasarımı, karanlık mod desteği ve pürüzsüz animasyonlar.
+
+## 🚀 Hızlı Başlangıç
+
+### Gereksinimler
+
+1. **Node.js** (v18+)
+2. **Rust & Cargo** (Tauri için)
+3. **ADB** (Android için PATH'e ekli olmalı)
+4. **iTunes** (iOS sürücüleri için Windows'ta yüklü olmalı)
+
+### Kurulum
+
+```bash
+# Projeyi klonlayın
+git clone https://github.com/yilmazsezer55/geoshift.git
+cd geoshift
+
+# Bağımlılıkları yükle
+npm install
+
+# Geliştirme modunda başlat
+npm run tauri dev
+```
+
+## 📖 Cihaz Hazırlığı
+
+### Android
+- **Geliştirici Seçeneklerini** açın.
+- **USB Hata Ayıklama** modunu aktifleştirin.
+- Uygulama içindeki rehberi takip ederek **Sahte Konum Uygulaması** olarak "Appium Settings"i seçin.
+
+### iOS
+- Cihazı bilgisayara bağlayın ve "Güven" seçeneğini onaylayın.
+- **Geliştirici Modunu** aktifleştirin (Ayarlar > Gizlilik ve Güvenlik).
+- iOS 17+ cihazlar için sistem otomatik olarak Remote Service Discovery tünelini kuracaktır.
+
+## 🛠️ Teknik Altyapı
+
+- **Frontend:** React, TypeScript, Vite
+- **Backend:** Rust, Tauri
+- **iOS Engine:** pymobiledevice3 (Python üzerinden tünelleme)
+- **Android Engine:** ADB, Appium Settings Service
+- **Harita:** Leaflet.js
+
+## ⚠️ Önemli Not
+Bu yazılım sadece **yazılım test ve geliştirme** amaçları için tasarlanmıştır. Konum tabanlı oyunlarda veya diğer platformlarda kullanım politikalarına aykırı durumlar oluşabilir. Sorumluluk kullanıcıya aittir.
+
+---
+**Geliştirici:** [Yılmaz Sezer](https://github.com/yilmazsezer55)  
+**Lisans:** MIT
