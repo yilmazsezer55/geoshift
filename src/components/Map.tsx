@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import { Search, Layers, Target, Smartphone, MapPin, Route, Gamepad2, Plus, Minus, Loader2, X, Apple, ChevronLeft } from 'lucide-react';
 
@@ -16,18 +16,47 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 // --- Custom Icons ---
-const UserIcon = L.divIcon({
+const getUserIcon = (rotation: number = 0) => L.divIcon({
     className: 'custom-user-icon',
     html: `<div style="
-        background-color: #3b82f6;
-        width: 20px;
-        height: 20px;
+        position: relative;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    ">
+        <div style="
+            background-color: #3b82f6;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.6);
+        "></div>
+    </div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+});
+
+const StartIcon = L.divIcon({
+    className: 'custom-start-icon',
+    html: `<div style="
+        background-color: #10b981;
+        width: 24px;
+        height: 24px;
         border-radius: 50%;
-        border: 3px solid white;
-        box-shadow: 0 0 15px rgba(59, 130, 246, 0.6);
-    "></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10]
+        border: 2px solid white;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 900;
+        font-size: 12px;
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+    ">A</div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
 });
 
 const TargetIcon = L.divIcon({
@@ -76,10 +105,16 @@ interface MapProps {
     onScanDevices: () => void;
     hasDeviceNotification?: boolean;
     isScanning?: boolean;
+    mapRotation?: number;
+    onOpenWizard: (device: Device, stepId?: string) => void;
+    routePath?: { latitude: number; longitude: number }[];
+    routeProgress?: number;
+    routeCurrentIndex?: number;
+    selectionMode: 'start' | 'end' | 'none';
 }
 
 // SAFE MapFlyTo - PREVENTS LOOPS
-function MapFlyTo({ center, trigger, zoom = 15 }: { center: { latitude: number, longitude: number } | null, trigger?: number, zoom?: number }) {
+function MapFlyTo({ center, trigger, zoom = 15, rotation = 0 }: { center: { latitude: number, longitude: number } | null, trigger?: number, zoom?: number, rotation?: number }) {
     const map = useMap();
     const lastTrigger = useRef(trigger);
 
@@ -95,7 +130,14 @@ function MapFlyTo({ center, trigger, zoom = 15 }: { center: { latitude: number, 
             map.flyTo([center.latitude, center.longitude], triggerChanged ? 17 : Math.max(map.getZoom(), zoom));
             lastTrigger.current = trigger;
         }
-    }, [center, map, trigger, zoom]);
+
+        // Handle rotation if supported (e.g. via CSS or a plugin, but standard Leaflet doesn't rotate easily)
+        // For standard Leaflet, we can rotate the container div
+        const mapDiv = map.getContainer();
+        mapDiv.style.transform = `rotate(${rotation}deg)`;
+        // Note: rotating the div will rotate EVERYTHING including markers.
+        // A better way is using a plugin like Leaflet.Rotate, but for now we will just rotate the icon.
+    }, [center, map, trigger, zoom, rotation]);
 
     return null;
 }
@@ -170,7 +212,13 @@ export default function Map({
     onSelectDevice,
     onScanDevices,
     hasDeviceNotification,
-    isScanning
+    isScanning,
+    mapRotation = 0,
+    onOpenWizard,
+    routePath = [],
+    routeProgress = 0,
+    routeCurrentIndex = 0,
+    startLocation
 }: MapProps) {
     const [overlayMode, setOverlayMode] = useState<'default' | 'guide'>('default');
     const [guideOS, setGuideOS] = useState<'android' | 'ios'>('android');
@@ -297,7 +345,13 @@ export default function Map({
             </div>
 
             {/* Leaflet Map */}
-            <MapContainer center={[41.0082, 28.9784]} zoom={13} style={{ height: '100%', width: '100%' }} zoomControl={false} whenReady={(e) => setMapInstance(e.target)}>
+            <MapContainer
+                center={[41.0082, 28.9784]}
+                zoom={13}
+                style={{ height: '100%', width: '100%' }}
+                zoomControl={false}
+                ref={(map: any) => { if (map) setMapInstance(map); }}
+            >
                 <TileLayer url={mapStyle === 'osm' ? "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"} />
                 <MapClickHandler onLocationSelect={onLocationSelect} />
 
@@ -308,11 +362,48 @@ export default function Map({
                 />
 
                 {currentLocation && (
-                    <Marker position={[currentLocation.latitude, currentLocation.longitude]} icon={UserIcon} zIndexOffset={1000} />
+                    <Marker position={[currentLocation.latitude, currentLocation.longitude]} icon={getUserIcon(mapRotation)} zIndexOffset={1000} />
+                )}
+
+                {/* --- Start Point (A) --- */}
+                {mode === 'route' && startLocation && (
+                    <Marker position={[startLocation.latitude, startLocation.longitude]} icon={StartIcon} />
                 )}
 
                 {selectedLocation && (
                     <Marker position={[selectedLocation.latitude, selectedLocation.longitude]} icon={TargetIcon} />
+                )}
+
+                {/* --- Road-based Route Line --- */}
+                {mode === 'route' && routePath && routePath.length > 0 && (
+                    <>
+                        {/* Traveled Path (Faint Solid Line) - Fixed Gap */}
+                        <Polyline
+                            positions={[
+                                ...routePath.slice(0, routeCurrentIndex + 1).map(p => [p.latitude, p.longitude] as [number, number]),
+                                ...(currentLocation ? [[currentLocation.latitude, currentLocation.longitude] as [number, number]] : [])
+                            ]}
+                            color="var(--text-muted)"
+                            weight={3}
+                            opacity={0.4}
+                        />
+                        {/* Remaining Path (Bold Dashed Animated Line) - Fixed Gap */}
+                        <Polyline
+                            positions={[
+                                ...(currentLocation ? [[currentLocation.latitude, currentLocation.longitude] as [number, number]] : []),
+                                ...routePath.slice(routeCurrentIndex + 1).map(p => [p.latitude, p.longitude] as [number, number])
+                            ]}
+                            color="#4f46e5"
+                            weight={7}
+                            opacity={0.9}
+                            dashArray="12, 12"
+                            eventHandlers={{
+                                add: (e) => {
+                                    e.target.getElement().classList.add('route-path-animated');
+                                }
+                            }}
+                        />
+                    </>
                 )}
             </MapContainer>
 
@@ -346,7 +437,7 @@ export default function Map({
                                     devices.map(d => (
                                         <button key={d.id} onClick={() => onSelectDevice(d)} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', padding: '16px', border: (d.status === 'Unauthorized' || d.status === 'Missing' || d.id === 'generic-android') ? '1.5px solid #fde68a' : '1px solid var(--border)', background: (d.status === 'Unauthorized' || d.status === 'Missing' || d.id === 'generic-android') ? '#fffbeb' : 'white' }}>
                                             {d.os === 'ios' ? <Apple size={20} style={{ color: 'var(--primary)' }} /> : <Smartphone size={20} style={{ color: (d.status !== 'Device' && d.status !== 'Connected') ? '#f59e0b' : 'var(--primary)' }} />}
-                                            <div style={{ textAlign: 'left' }}>
+                                            <div style={{ textAlign: 'left', flex: 1 }}>
                                                 <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                     {d.name}
                                                     {d.status === 'Unauthorized' && <span style={{ fontSize: '0.6rem', padding: '2px 6px', background: '#f59e0b', color: 'white', borderRadius: '4px' }}>İZİN GEREKLİ</span>}
@@ -354,6 +445,15 @@ export default function Map({
                                                 </div>
                                                 <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{d.model} {d.status !== 'Device' && d.status !== 'Connected' && d.status !== 'Missing' ? `(${d.status})` : ''}</div>
                                             </div>
+                                            {d.os === 'ios' && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onOpenWizard(d); }}
+                                                    style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: '4px' }}
+                                                    title="Bağlantı Sihirbazı"
+                                                >
+                                                    <Loader2 size={16} />
+                                                </button>
+                                            )}
                                         </button>
                                     ))
                                 )}

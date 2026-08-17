@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { ArrowUp, Gamepad2, Zap, Car, Footprints, Route, MapPin, ArrowUpDown, Target, Upload } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { ArrowUp, Gamepad2, Zap, Car, Footprints, Route, MapPin, ArrowUpDown, Bike, X, Pause, Play } from 'lucide-react';
 
 interface Device {
     id: string;
@@ -31,6 +31,14 @@ interface LocationControlsProps {
     setSelectionMode: (mode: 'start' | 'end' | 'none') => void;
     isLoading: boolean;
     mapRotation: number;
+    onStartRoute?: (speedKmh: number, mode: 'walk' | 'run' | 'drive') => void;
+    onStopRoute?: () => void;
+    onPauseRoute?: () => void;
+    onResumeRoute?: () => void;
+    routeActive?: boolean;
+    routePaused?: boolean;
+    speed: 'walk' | 'run' | 'drive';
+    onSpeedChange: (speed: 'walk' | 'run' | 'drive') => void;
 }
 
 export default function LocationControls({
@@ -48,12 +56,17 @@ export default function LocationControls({
     selectionMode,
     setSelectionMode,
     isLoading,
-    mapRotation
+    mapRotation,
+    onStartRoute,
+    onStopRoute,
+    onPauseRoute,
+    onResumeRoute,
+    routeActive,
+    routePaused,
+    speed,
+    onSpeedChange
 }: LocationControlsProps) {
     const canChangeLocation = selectedDevice && selectedLocation && !isLoading;
-    const [speed, setSpeed] = useState<'walk' | 'run' | 'drive'>('walk');
-    const [realisticMode, setRealisticMode] = useState(false);
-    const [followMode, setFollowMode] = useState(false);
     const [isMoving, setIsMoving] = useState(false);
     const [distanceInfo, setDistanceInfo] = useState({ km: 0, time: '--:--' });
     const [currentAddress, setCurrentAddress] = useState<string>('Konum alınıyor...');
@@ -119,11 +132,11 @@ export default function LocationControls({
             let targetLat = latitude + Math.sin(mathRad) * step;
             let targetLng = longitude + Math.cos(mathRad) * step;
 
-            await onJoystickMove(targetLat, targetLng, followMode, false, newHeading);
+            await onJoystickMove(targetLat, targetLng, false, false, newHeading);
         } finally {
             setTimeout(() => setIsMoving(false), 50);
         }
-    }, [selectedDevice, mode, isMoving, currentLocation, selectedLocation, speed, followMode, mapRotation, onJoystickMove]);
+    }, [selectedDevice, mode, isMoving, currentLocation, selectedLocation, speed, mapRotation, onJoystickMove]);
 
     useEffect(() => {
         if (mode !== 'joystick') return;
@@ -185,6 +198,170 @@ export default function LocationControls({
                     </div>
                 )}
 
+                {mode === 'route' && (
+                    <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {/* Hız Ayarı */}
+                        <div>
+                            <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px', display: 'block' }}>Hareket Hızı</label>
+                            <div style={{ display: 'flex', gap: '8px', background: '#f1f5f9', padding: '6px', borderRadius: '14px' }}>
+                                {(['walk', 'run', 'drive'] as const).map((s) => (
+                                    <button
+                                        key={s}
+                                        onClick={() => onSpeedChange(s)}
+                                        style={{ flex: 1, height: '40px', border: 'none', borderRadius: '10px', background: speed === s ? 'white' : 'transparent', color: speed === s ? 'var(--primary)' : 'var(--text-secondary)', cursor: 'pointer', boxShadow: speed === s ? '0 2px 8px rgba(0,0,0,0.05)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}
+                                        title={s === 'walk' ? 'Yürüme (5 km/h)' : s === 'run' ? 'Bisiklet (12 km/h)' : 'Sürüş (60 km/h)'}
+                                    >
+                                        {s === 'walk' ? <Footprints size={18} /> : s === 'run' ? <Bike size={18} style={{ color: speed === 'run' ? '#f59e0b' : 'inherit' }} /> : <Car size={18} />}
+                                    </button>
+                                ))}
+                            </div>
+                            <div style={{ textAlign: 'center', marginTop: '8px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary)' }}>
+                                {SPEED_KMH[speed]} km/h
+                            </div>
+                        </div>
+
+                        {/* Başlangıç Noktası (A) */}
+                        <div
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '8px',
+                                padding: '16px',
+                                background: selectionMode === 'start' ? 'rgba(16, 185, 129, 0.05)' : '#f8fafc',
+                                borderRadius: '12px',
+                                border: selectionMode === 'start' ? '1.5px solid #10b981' : '1px solid var(--border-light)',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            <div
+                                onClick={() => setSelectionMode('start')}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ width: '20px', height: '20px', background: '#10b981', borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 900 }}>A</div>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#10b981', textTransform: 'uppercase' }}>Başlangıç Noktası</span>
+                                </div>
+                                {currentLocation && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onSetStartLocation(currentLocation); }}
+                                        style={{ background: 'white', border: '1px solid #10b981', color: '#10b981', padding: '2px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}
+                                    >
+                                        Mevcut Konum
+                                    </button>
+                                )}
+                            </div>
+                            <div
+                                onClick={() => setSelectionMode('start')}
+                                style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word', cursor: 'pointer' }}
+                            >
+                                {startAddress || (startLocation ? `${startLocation.latitude.toFixed(5)}, ${startLocation.longitude.toFixed(5)}` : 'Haritadan seçin veya arayın')}
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'center', margin: '-10px 0', zIndex: 2 }}>
+                            <div style={{ background: 'white', borderRadius: '50%', padding: '4px', border: '1px solid var(--border-light)', color: 'var(--text-muted)' }}>
+                                <ArrowUpDown size={14} />
+                            </div>
+                        </div>
+
+                        {/* Varış Noktası (B) */}
+                        <div
+                            style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '8px',
+                                padding: '16px',
+                                background: selectionMode === 'end' ? 'rgba(239, 68, 68, 0.05)' : '#f8fafc',
+                                borderRadius: '12px',
+                                border: selectionMode === 'end' ? '1.5px solid #ef4444' : '1px solid var(--border-light)',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            <div
+                                onClick={() => setSelectionMode('end')}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <div style={{ width: '20px', height: '20px', background: '#ef4444', borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 900 }}>B</div>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#ef4444', textTransform: 'uppercase' }}>Varış Noktası</span>
+                                </div>
+                                {currentLocation && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onSetEndLocation(currentLocation); }}
+                                        style={{ background: 'white', border: '1px solid #ef4444', color: '#ef4444', padding: '2px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}
+                                    >
+                                        Mevcut Konum
+                                    </button>
+                                )}
+                            </div>
+                            <div
+                                onClick={() => setSelectionMode('end')}
+                                style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-word', cursor: 'pointer' }}
+                            >
+                                {selectedAddress || (selectedLocation ? `${selectedLocation.latitude.toFixed(5)}, ${selectedLocation.longitude.toFixed(5)}` : 'Haritadan seçin veya arayın')}
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                            <button
+                                className={`btn ${routeActive ? (routePaused ? 'btn-start-gradient' : 'btn-secondary') : 'btn-start-gradient'}`}
+                                onClick={() => {
+                                    if (!routeActive) onStartRoute?.(SPEED_KMH[speed], speed);
+                                    else routePaused ? onResumeRoute?.() : onPauseRoute?.();
+                                }}
+                                disabled={(!startLocation || !selectedLocation || isLoading) && !routeActive}
+                                style={{
+                                    height: '52px',
+                                    flex: 2,
+                                    borderRadius: '16px',
+                                    fontSize: '1rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '10px'
+                                }}
+                            >
+                                {!routeActive ? (
+                                    <>
+                                        <Route size={20} strokeWidth={2.5} />
+                                        <span>Yolculuğu Başlat</span>
+                                    </>
+                                ) : routePaused ? (
+                                    <>
+                                        <Play size={20} strokeWidth={2.5} />
+                                        <span>Devam Et</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Pause size={20} strokeWidth={2.5} />
+                                        <span>Duraklat</span>
+                                    </>
+                                )}
+                            </button>
+
+                            {routeActive && (
+                                <button
+                                    className="btn btn-stop-pulse"
+                                    onClick={() => onStopRoute?.()}
+                                    style={{
+                                        height: '52px',
+                                        flex: 1,
+                                        borderRadius: '16px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}
+                                    title="Simülasyonu Bitir"
+                                >
+                                    <div className="stop-icon-container">
+                                        <X size={20} strokeWidth={3} />
+                                    </div>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {mode === 'joystick' && (
                     <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                         <div>
@@ -193,10 +370,11 @@ export default function LocationControls({
                                 {(['walk', 'run', 'drive'] as const).map((s) => (
                                     <button
                                         key={s}
-                                        onClick={() => setSpeed(s)}
+                                        onClick={() => onSpeedChange(s)}
                                         style={{ flex: 1, height: '40px', border: 'none', borderRadius: '10px', background: speed === s ? 'white' : 'transparent', color: speed === s ? 'var(--primary)' : 'var(--text-secondary)', cursor: 'pointer', boxShadow: speed === s ? '0 2px 8px rgba(0,0,0,0.05)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}
+                                        title={s === 'walk' ? 'Yürüme (5 km/h)' : s === 'run' ? 'Bisiklet (12 km/h)' : 'Sürüş (60 km/h)'}
                                     >
-                                        {s === 'walk' ? <Footprints size={18} /> : s === 'run' ? <Zap size={18} /> : <Car size={18} />}
+                                        {s === 'walk' ? <Footprints size={18} /> : s === 'run' ? <Bike size={18} style={{ color: speed === 'run' ? '#f59e0b' : 'inherit' }} /> : <Car size={18} />}
                                     </button>
                                 ))}
                             </div>

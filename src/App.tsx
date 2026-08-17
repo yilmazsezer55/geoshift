@@ -57,20 +57,6 @@ function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
   return R * c;
 }
 
-// Estimate cooldown in minutes based on distance (Table based on Pokémon GO standards)
-function getCooldownMinutes(distanceKm: number) {
-  if (distanceKm < 0.1) return 0;
-  if (distanceKm < 2) return 1;
-  if (distanceKm < 5) return 2;
-  if (distanceKm < 10) return 7;
-  if (distanceKm < 25) return 11;
-  if (distanceKm < 100) return 35;
-  if (distanceKm < 250) return 45;
-  if (distanceKm < 500) return 60;
-  if (distanceKm < 1000) return 90;
-  return 120; // Max cooldown
-}
-
 // Custom Titlebar Component (Checklist Optimized)
 const CustomTitlebar = ({ setMessage }: { setMessage: (msg: any) => void }) => {
   const appWindow = getCurrentWindow();
@@ -134,6 +120,16 @@ function App() {
   // Selection Mode ('start', 'end', or 'none')
   const [selectionMode, setSelectionMode] = useState<'start' | 'end' | 'none'>('none');
 
+  // Movement speed
+  const [speed, setSpeed] = useState<'walk' | 'run' | 'drive'>('walk');
+  const speedRef = useRef<number>(5); // Default 5 km/h
+
+  const SPEED_KMH = { walk: 5, run: 12, drive: 60 };
+
+  useEffect(() => {
+    speedRef.current = SPEED_KMH[speed];
+  }, [speed]);
+
   // Device Panel & Notification States
   const [showDevicePanel, setShowDevicePanel] = useState(false);
   const [hasNewDeviceNotification, setHasNewDeviceNotification] = useState(false);
@@ -143,6 +139,159 @@ function App() {
   const [showAndroidWizard, setShowAndroidWizard] = useState(false);
   const [wizardDevice, setWizardDevice] = useState<Device | null>(null);
   const [initialWizardStep, setInitialWizardStep] = useState<string | undefined>(undefined);
+
+  const [routeSimulation, setRouteSimulation] = useState<{
+    active: boolean;
+    paused: boolean;
+    progress: number;
+    path: Location[];
+    currentIndex: number;
+  }>({ active: false, paused: false, progress: 0, path: [], currentIndex: 0 });
+
+  const routeTimerRef = useRef<any>(null);
+  const isRouteRunning = useRef<boolean>(false);
+  const isRoutePaused = useRef<boolean>(false);
+
+  const stopRouteSimulation = () => {
+    isRouteRunning.current = false;
+    isRoutePaused.current = false;
+    if (routeTimerRef.current) {
+      clearTimeout(routeTimerRef.current);
+      routeTimerRef.current = null;
+    }
+    setRouteSimulation({ active: false, paused: false, progress: 0, path: [], currentIndex: 0 });
+    setIsLoading(false);
+  };
+
+  const pauseRouteSimulation = () => {
+    isRoutePaused.current = true;
+    setRouteSimulation(prev => ({ ...prev, paused: true }));
+  };
+
+  const resumeRouteSimulation = () => {
+    isRoutePaused.current = false;
+    setRouteSimulation(prev => ({ ...prev, paused: false }));
+  };
+
+  const startRouteSimulation = async (initialSpeedKmh: number, speedMode: 'walk' | 'run' | 'drive' = 'walk') => {
+    if (!selectedDevice || !startLocation || !selectedLocation) return;
+
+    stopRouteSimulation();
+    setIsLoading(true);
+
+    try {
+      // SMART PROFILE SELECTION:
+      // Walk -> walking (shortcuts, pedestrian paths)
+      // Run -> bicycle (bike paths, narrow streets)
+      // Drive -> driving (follows traffic rules, one-way streets, avoids pedestrian areas)
+      const profile = speedMode === 'walk' ? 'walking' : speedMode === 'run' ? 'bicycle' : 'driving';
+
+      // We use 'radiuses' to tell OSRM to find the nearest path within 200 meters,
+      // but priority is given to the exact point.
+      const res = await fetch(`https://router.project-osrm.org/route/v1/${profile}/${startLocation.longitude},${startLocation.latitude};${selectedLocation.longitude},${selectedLocation.latitude}?overview=full&geometries=geojson&continue_straight=true&radiuses=200;200`);
+      const data = await res.json();
+
+      if (!data.routes || data.routes.length === 0) {
+        throw new Error("Yol tarifi bulunamadı.");
+      }
+
+      const coordinates = data.routes[0].geometry.coordinates;
+      let path: Location[] = coordinates.map((c: any) => ({ latitude: c[1], longitude: c[0] }));
+
+      // Ensure the path starts and ends EXACTLY at the user-defined markers to avoid snapping gaps
+      path = [startLocation, ...path, selectedLocation];
+
+      let totalDist = 0;
+      const segmentDistances: number[] = [0];
+      for (let i = 0; i < path.length - 1; i++) {
+        const d = getDistance(path[i].latitude, path[i].longitude, path[i+1].latitude, path[i+1].longitude);
+        totalDist += d;
+        segmentDistances.push(totalDist);
+      }
+
+      isRouteRunning.current = true;
+      setRouteSimulation({ active: true, paused: false, progress: 0, path, currentIndex: 0 });
+
+      let currentDistCovered = 0;
+      let lastTickTimestamp = Date.now();
+
+      const runTick = async () => {
+        if (!isRouteRunning.current) return;
+
+        const now = Date.now();
+        const deltaTime = now - lastTickTimestamp;
+        lastTickTimestamp = now;
+
+        if (isRoutePaused.current) {
+          routeTimerRef.current = setTimeout(runTick, 100);
+          return;
+        }
+
+        const currentSpeedKmh = speedRef.current;
+        const speedKmMs = currentSpeedKmh / (3600 * 1000);
+        currentDistCovered += deltaTime * speedKmMs;
+        const progress = Math.min(currentDistCovered / totalDist, 1);
+
+        let segmentIndex = 0;
+        while (segmentIndex < segmentDistances.length - 1 && segmentDistances[segmentIndex + 1] < currentDistCovered) {
+          segmentIndex++;
+        }
+
+        if (progress >= 1 || segmentIndex >= path.length - 1) {
+          const final = path[path.length - 1];
+          await invoke('set_location', { os: selectedDevice.os, udid: selectedDevice.id, lat: final.latitude, lng: final.longitude });
+          setCurrentLocation(final);
+          setRouteSimulation(prev => ({ ...prev, progress: 1 }));
+          stopRouteSimulation();
+          setMessage({ type: 'success', text: 'Hedefe ulaşıldı! 🏁' });
+          return;
+        }
+
+        const sDist = segmentDistances[segmentIndex];
+        const eDist = segmentDistances[segmentIndex + 1];
+        const segProgress = (currentDistCovered - sDist) / (eDist - sDist);
+
+        const p1 = path[segmentIndex];
+        const p2 = path[segmentIndex + 1];
+        const lat = p1.latitude + (p2.latitude - p1.latitude) * segProgress;
+        const lng = p1.longitude + (p2.longitude - p1.longitude) * segProgress;
+
+        const calculateBearing = (sLat: number, sLng: number, dLat: number, dLng: number) => {
+          const sLatRad = sLat * Math.PI / 180;
+          const dLatRad = dLat * Math.PI / 180;
+          const dLngRad = (dLng - sLng) * Math.PI / 180;
+          const y = Math.sin(dLngRad) * Math.cos(dLatRad);
+          const x = Math.cos(sLatRad) * Math.sin(dLatRad) -
+                    Math.sin(sLatRad) * Math.cos(dLatRad) * Math.cos(dLngRad);
+          return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        };
+
+        const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+
+        try {
+          await invoke('set_location', { os: selectedDevice.os, udid: selectedDevice.id, lat, lng });
+          if (isRouteRunning.current) {
+            setCurrentLocation({ latitude: lat, longitude: lng });
+            setMapRotation(bearing);
+            setRouteSimulation(prev => ({ ...prev, progress, currentIndex: segmentIndex }));
+          }
+        } catch (e) {
+          console.error("Simulation tick failed:", e);
+        }
+
+        if (isRouteRunning.current) {
+          routeTimerRef.current = setTimeout(runTick, 150);
+        }
+      };
+
+      runTick();
+
+    } catch (e) {
+      console.error("Route simulation failed:", e);
+      stopRouteSimulation();
+      setMessage({ type: 'error', text: String(e) || 'Rota başlatılamadı.' });
+    }
+  };
 
   const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState<boolean>(() => {
     return localStorage.getItem('geoshift_disclaimer_accepted') === 'true';
@@ -184,23 +333,27 @@ function App() {
   // Reverse Geocoding Helper
   const fetchAddress = async (loc: Location): Promise<string> => {
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${loc.latitude}&lon=${loc.longitude}&zoom=18&addressdetails=1`);
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${loc.latitude}&lon=${loc.longitude}&zoom=18&addressdetails=1`, {
+        headers: { 'User-Agent': 'GeoShift-App' }
+      });
       const data = await response.json();
-      // Try to get a short name: road + house_number or just suburb/city
+
+      if (data.error) throw new Error(data.error);
+
       const addr = data.address;
       if (addr) {
         const parts = [];
         if (addr.road) parts.push(addr.road);
         if (addr.house_number) parts.push(addr.house_number);
-        if (parts.length === 0 && addr.suburb) parts.push(addr.suburb);
+        if (parts.length === 0 && (addr.suburb || addr.neighbourhood)) parts.push(addr.suburb || addr.neighbourhood);
         if (parts.length === 0 && addr.city) parts.push(addr.city);
 
         return parts.join(' ') || data.display_name.split(',')[0];
       }
-      return data.display_name.split(',')[0] || "Bilinmeyen Adres";
+      return data.display_name.split(',')[0] || `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
     } catch (e) {
       console.error("Reverse geocode failed", e);
-      return "Adres alınamadı";
+      return `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
     }
   };
 
@@ -528,38 +681,6 @@ function App() {
       setShowAndroidWizard(true);
     } else {
       setSelectedDevice(device);
-    }
-  };
-
-  // Smart Auto-Connect Logic
-  const autoConnectDevice = async (device: Device) => {
-    // If iOS, verify Dev Mode silently first
-    if (device.os === 'ios') {
-      try {
-        const devMode = await invoke<any>('check_ios_developer_mode', { udid: device.id });
-        const isEnabled = typeof devMode === 'boolean' ? devMode : devMode?.developer_mode;
-
-        if (isEnabled) {
-          console.log(`[AUTO-CONNECT] iOS Dev Mode enabled for ${device.name}. Skipping wizard.`);
-          setSelectedDevice({ ...device, developerModeEnabled: true, developerModeChecked: true });
-          setMessage({ type: 'success', text: `✅ ${device.name} bağlandı!` });
-          setShowIOSWizard(false);
-          setWizardDevice(null);
-        } else {
-          console.warn(`[AUTO-CONNECT] iOS Dev Mode disabled for ${device.name}. Opening wizard.`);
-          handleDeviceSelect(device);
-        }
-      } catch (e) {
-        console.error(`[AUTO-CONNECT] iOS Dev Mode check failed: ${e}`);
-        handleDeviceSelect(device); // Open wizard as fallback
-      }
-    } else {
-      // Android auto-connect
-      setSelectedDevice(device);
-      setMessage({ type: 'success', text: `✅ ${device.name} bağlandı!` });
-      // Force close wizard
-      setShowIOSWizard(false);
-      setWizardDevice(null);
     }
   };
 
@@ -912,6 +1033,10 @@ function App() {
               devices={uniqueDevices}
               onSelectDevice={handleDeviceSelect}
               onOpenWizard={openWizard}
+              routePath={routeSimulation.path}
+              routeProgress={routeSimulation.progress}
+              routeCurrentIndex={routeSimulation.currentIndex}
+              selectionMode={selectionMode}
             />
 
             {/* Teleporting Loading Indicator Overlay */}
@@ -1036,6 +1161,14 @@ function App() {
                       }
                     }}
                     isLoading={isLoading}
+                    onStartRoute={startRouteSimulation}
+                    onStopRoute={stopRouteSimulation}
+                    onPauseRoute={pauseRouteSimulation}
+                    onResumeRoute={resumeRouteSimulation}
+                    routeActive={routeSimulation.active}
+                    routePaused={routeSimulation.paused}
+                    speed={speed}
+                    onSpeedChange={setSpeed}
                   />
                 </div>
               </div>
