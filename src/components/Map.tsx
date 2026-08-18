@@ -377,22 +377,16 @@ export default function Map({
                 {/* --- Road-based Route Line --- */}
                 {mode === 'route' && routePath && routePath.length > 0 && (
                     <>
-                        {/* Traveled Path (Faint Solid Line) - Fixed Gap */}
+                        {/* Traveled Path (Faint Solid Line) */}
                         <Polyline
-                            positions={[
-                                ...routePath.slice(0, routeCurrentIndex + 1).map(p => [p.latitude, p.longitude] as [number, number]),
-                                ...(currentLocation ? [[currentLocation.latitude, currentLocation.longitude] as [number, number]] : [])
-                            ]}
+                            positions={routePath.slice(0, routeCurrentIndex + 1).map(p => [p.latitude, p.longitude] as [number, number])}
                             color="var(--text-muted)"
                             weight={3}
                             opacity={0.4}
                         />
-                        {/* Remaining Path (Bold Dashed Animated Line) - Fixed Gap */}
+                        {/* Remaining Path (Bold Dashed Animated Line) */}
                         <Polyline
-                            positions={[
-                                ...(currentLocation ? [[currentLocation.latitude, currentLocation.longitude] as [number, number]] : []),
-                                ...routePath.slice(routeCurrentIndex + 1).map(p => [p.latitude, p.longitude] as [number, number])
-                            ]}
+                            positions={routePath.slice(routeCurrentIndex).map(p => [p.latitude, p.longitude] as [number, number])}
                             color="#4f46e5"
                             weight={7}
                             opacity={0.9}

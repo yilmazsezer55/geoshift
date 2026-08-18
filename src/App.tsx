@@ -140,6 +140,25 @@ function App() {
   const [wizardDevice, setWizardDevice] = useState<Device | null>(null);
   const [initialWizardStep, setInitialWizardStep] = useState<string | undefined>(undefined);
 
+  // --- Central Routing Configuration ---
+  const ROUTING_CONFIG = {
+    walk: {
+      baseUrl: 'https://routing.openstreetmap.de/routed-foot',
+      radius: 30,
+      continueStraight: false
+    },
+    run: { // Cycle mode in UI
+      baseUrl: 'https://routing.openstreetmap.de/routed-bike',
+      radius: 50,
+      continueStraight: true
+    },
+    drive: {
+      baseUrl: 'https://routing.openstreetmap.de/routed-car',
+      radius: 100,
+      continueStraight: true
+    }
+  };
+
   const [routeSimulation, setRouteSimulation] = useState<{
     active: boolean;
     paused: boolean;
@@ -180,12 +199,10 @@ function App() {
     setIsLoading(true);
 
     try {
-      // SMART PROFILE SELECTION:
-      // Walk/Run -> pedestrian (ensures bazaar/narrow paths are used)
-      // Drive -> car (respects traffic rules, one-way, avoids squares)
-      const profile = speedMode === 'drive' ? 'driving' : 'walking';
+      const config = ROUTING_CONFIG[speedMode];
+      const url = `${config.baseUrl}/route/v1/driving/${startLocation.longitude},${startLocation.latitude};${selectedLocation.longitude},${selectedLocation.latitude}?overview=full&geometries=geojson&continue_straight=${config.continueStraight}&radiuses=${config.radius};${config.radius}`;
 
-      const res = await fetch(`https://routing.openstreetmap.de/routed-${profile === 'driving' ? 'car' : 'foot'}/route/v1/driving/${startLocation.longitude},${startLocation.latitude};${selectedLocation.longitude},${selectedLocation.latitude}?overview=full&geometries=geojson&continue_straight=true&radiuses=200;200`);
+      const res = await fetch(url);
       const data = await res.json();
 
       if (!data.code || data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
@@ -356,6 +373,53 @@ function App() {
     }
   };
 
+  const calculateRoute = async (start: Location, end: Location, speedMode: 'walk' | 'run' | 'drive') => {
+    const config = ROUTING_CONFIG[speedMode];
+    const url = `${config.baseUrl}/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&continue_straight=${config.continueStraight}&radiuses=${config.radius};${config.radius}`;
+
+    console.log(`[ROUTING] Fetching route from ${config.baseUrl}...`);
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+        throw new Error(data.message || "Yol tarifi bulunamadı.");
+      }
+
+      const route = data.routes[0];
+      const coordinates = route.geometry.coordinates;
+      let path: Location[] = coordinates.map((c: any) => ({ latitude: c[1], longitude: c[0] }));
+
+      // Ensure exact start/end snapping
+      path = [start, ...path, end];
+
+      console.log(`[ROUTING] Route found! Points: ${path.length}`);
+      setRouteSimulation(prev => ({
+        ...prev,
+        path,
+        currentIndex: 0,
+        progress: 0,
+        metadata: {
+          distance: route.distance,
+          duration: route.duration,
+          startSnap: data.waypoints?.[0]?.distance,
+          endSnap: data.waypoints?.[1]?.distance
+        }
+      }));
+      return path;
+    } catch (e) {
+      console.error("[ROUTING] Failed:", e);
+      return null;
+    }
+  };
+
+  // Recalculate route if mode or points change
+  useEffect(() => {
+    if (mode === 'route' && startLocation && selectedLocation) {
+      calculateRoute(startLocation, selectedLocation, speed);
+    }
+  }, [speed, startLocation, selectedLocation, mode]);
+
   // Handle Map Clicks for A/B Point selection
   const handleLocationSelect = async (loc: Location | null, mode_param?: 'start' | 'end', addr?: string) => {
     if (!loc) {
@@ -398,12 +462,21 @@ function App() {
         setSelectedAddress(a);
       }
     } else {
-      // Default behavior if no mode is active in Route mode
-      if (!startLocation) {
+      // Circular behavior in Route mode: A -> B -> New A
+      if (startLocation && selectedLocation) {
+        // Both exist, start fresh with new A
+        setStartLocation(loc);
+        setSelectedLocation(null);
+        setSelectedAddress('');
+        const a = await fetchAddress(loc);
+        setStartAddress(a);
+      } else if (!startLocation) {
+        // No A, set A
         setStartLocation(loc);
         const a = await fetchAddress(loc);
         setStartAddress(a);
       } else {
+        // A exists, set B
         setSelectedLocation(loc);
         const a = await fetchAddress(loc);
         setSelectedAddress(a);
