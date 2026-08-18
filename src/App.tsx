@@ -181,26 +181,24 @@ function App() {
 
     try {
       // SMART PROFILE SELECTION:
-      // Walk -> walking (shortcuts, pedestrian paths)
-      // Run -> bicycle (bike paths, narrow streets)
-      // Drive -> driving (follows traffic rules, one-way streets, avoids pedestrian areas)
-      const profile = speedMode === 'walk' ? 'walking' : speedMode === 'run' ? 'bicycle' : 'driving';
+      // Walk/Run -> pedestrian (ensures bazaar/narrow paths are used)
+      // Drive -> car (respects traffic rules, one-way, avoids squares)
+      const profile = speedMode === 'drive' ? 'driving' : 'walking';
 
-      // We use 'radiuses' to tell OSRM to find the nearest path within 200 meters,
-      // but priority is given to the exact point.
-      const res = await fetch(`https://router.project-osrm.org/route/v1/${profile}/${startLocation.longitude},${startLocation.latitude};${selectedLocation.longitude},${selectedLocation.latitude}?overview=full&geometries=geojson&continue_straight=true&radiuses=200;200`);
+      const res = await fetch(`https://routing.openstreetmap.de/routed-${profile === 'driving' ? 'car' : 'foot'}/route/v1/driving/${startLocation.longitude},${startLocation.latitude};${selectedLocation.longitude},${selectedLocation.latitude}?overview=full&geometries=geojson&continue_straight=true&radiuses=200;200`);
       const data = await res.json();
 
-      if (!data.routes || data.routes.length === 0) {
-        throw new Error("Yol tarifi bulunamadı.");
+      if (!data.code || data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+        throw new Error(data.message || "Yol tarifi bulunamadı.");
       }
 
       const coordinates = data.routes[0].geometry.coordinates;
       let path: Location[] = coordinates.map((c: any) => ({ latitude: c[1], longitude: c[0] }));
 
-      // Ensure the path starts and ends EXACTLY at the user-defined markers to avoid snapping gaps
+      // Ensure exact start/end snapping at the visual level
       path = [startLocation, ...path, selectedLocation];
 
+      // PRE-CALCULATE DISTANCES for stability
       let totalDist = 0;
       const segmentDistances: number[] = [0];
       for (let i = 0; i < path.length - 1; i++) {
@@ -229,6 +227,7 @@ function App() {
 
         const currentSpeedKmh = speedRef.current;
         const speedKmMs = currentSpeedKmh / (3600 * 1000);
+
         currentDistCovered += deltaTime * speedKmMs;
         const progress = Math.min(currentDistCovered / totalDist, 1);
 
