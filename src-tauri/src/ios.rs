@@ -4,6 +4,12 @@ use std::path::Path;
 use std::process::Command;
 use std::process::Stdio;
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static TUNNELD_RUNNING_CACHE: AtomicBool = AtomicBool::new(false);
+static TUNNELD_LAST_CHECK_TIME: AtomicU64 = AtomicU64::new(0);
+
 fn get_python_executable() -> String {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let venv_root = manifest_dir.parent().unwrap_or(manifest_dir);
@@ -233,15 +239,31 @@ pub async fn is_ios_device_connected(udid: &str) -> bool {
 
 /// tunneld servisinin çalışıp çalışmadığını kontrol et (Port 49151)
 fn is_tunneld_running() -> bool {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let last_check = TUNNELD_LAST_CHECK_TIME.load(Ordering::Relaxed);
+
+    // Cache for 10 seconds to avoid constant port scanning/connection attempts
+    if now - last_check < 10 {
+        return TUNNELD_RUNNING_CACHE.load(Ordering::Relaxed);
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::net::TcpStream;
         use std::time::Duration;
-        TcpStream::connect_timeout(
+        let running = TcpStream::connect_timeout(
             &"127.0.0.1:49151".parse().unwrap(),
-            Duration::from_millis(500),
+            Duration::from_millis(200),
         )
-        .is_ok()
+        .is_ok();
+
+        TUNNELD_RUNNING_CACHE.store(running, Ordering::Relaxed);
+        TUNNELD_LAST_CHECK_TIME.store(now, Ordering::Relaxed);
+        running
     }
     #[cfg(not(target_os = "windows"))]
     {

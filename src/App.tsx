@@ -170,10 +170,12 @@ function App() {
   const routeTimerRef = useRef<any>(null);
   const isRouteRunning = useRef<boolean>(false);
   const isRoutePaused = useRef<boolean>(false);
+  const isDeviceBusyRef = useRef<boolean>(false); // Lock for phone sync
 
   const stopRouteSimulation = () => {
     isRouteRunning.current = false;
     isRoutePaused.current = false;
+    isDeviceBusyRef.current = false;
     if (routeTimerRef.current) {
       clearTimeout(routeTimerRef.current);
       routeTimerRef.current = null;
@@ -284,19 +286,23 @@ function App() {
 
         const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
 
-        try {
-          await invoke('set_location', { os: selectedDevice.os, udid: selectedDevice.id, lat, lng });
-          if (isRouteRunning.current) {
-            setCurrentLocation({ latitude: lat, longitude: lng });
-            setMapRotation(bearing);
-            setRouteSimulation(prev => ({ ...prev, progress, currentIndex: segmentIndex }));
-          }
-        } catch (e) {
-          console.error("Simulation tick failed:", e);
+        // --- REAL-TIME DEVICE SYNC ---
+        // UI updates very fast (100ms), but we only send to the phone if it's not busy.
+        // This ensures the map is fluid even if the USB connection lags.
+        if (!isDeviceBusyRef.current) {
+          isDeviceBusyRef.current = true;
+          invoke('set_location', { os: selectedDevice.os, udid: selectedDevice.id, lat, lng })
+            .finally(() => { isDeviceBusyRef.current = false; });
         }
 
         if (isRouteRunning.current) {
-          routeTimerRef.current = setTimeout(runTick, 150);
+          setCurrentLocation({ latitude: lat, longitude: lng });
+          setMapRotation(bearing);
+          setRouteSimulation(prev => ({ ...prev, progress, currentIndex: segmentIndex }));
+        }
+
+        if (isRouteRunning.current) {
+          routeTimerRef.current = setTimeout(runTick, 100); // 10 FPS for ultra-smooth map
         }
       };
 

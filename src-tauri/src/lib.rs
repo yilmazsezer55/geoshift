@@ -119,16 +119,8 @@ async fn set_location(
     lng: f64,
     state: tauri::State<'_, LocationState>,
 ) -> Result<String, String> {
-    // 1. Pre-Check: Is the device actually connected?
-    let is_connected = if os == "ios" {
-        ios::is_ios_device_connected(&udid).await
-    } else {
-        adb::is_android_device_connected(&udid).await
-    };
-
-    if !is_connected {
-        return Err("Cihaz bağlı değil. Lütfen kabloyu kontrol edin.".to_string());
-    }
+    // 1. Bağlantı ön-kontrolü kaldırıldı (Hız için).
+    // Hata durumunda alt katman zaten hata döndürecektir.
 
     // 2. Perform Simulation
     let result = if os == "ios" {

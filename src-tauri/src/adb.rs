@@ -318,8 +318,7 @@ pub async fn set_mock_location(
     latitude: f64,
     longitude: f64,
 ) -> Result<String, String> {
-    // 1. Yardımcı uygulama kontrolü
-    let _ = ensure_helper_app(device_id).await?;
+    // 1. Yardımcı uygulama kontrolü kaldırıldı (Performans için Discovery/Connect aşamasında yapılıyor)
 
     let mut server = ADBServer::new(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5037));
     let mut device = server
