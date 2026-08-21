@@ -57,10 +57,10 @@ export default function DeviceManager({ devices, selectedDevice, onSelectDevice,
                     ℹ️ Konum kontrolü sadece **seçili** cihaz üzerinde çalışır. Diğer cihazlar mevcut konumlarında kalır.
                 </p>
                 <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('open-android-guide'))}
+                    onClick={() => window.dispatchEvent(new CustomEvent('open-general-guide'))}
                     style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary)', fontSize: '0.65rem', fontWeight: 800, cursor: 'pointer', textDecoration: 'underline' }}
                 >
-                    Android cihazım görünmüyor ?
+                    Cihazlarım görünmüyor mu?
                 </button>
             </div>
 

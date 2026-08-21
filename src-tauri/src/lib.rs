@@ -162,6 +162,11 @@ async fn stop_all_simulations(state: tauri::State<'_, LocationState>) -> Result<
 }
 
 #[tauri::command]
+async fn wake_up_android(device_id: String) -> Result<(), String> {
+    adb::wake_up_helper(&device_id).await
+}
+
+#[tauri::command]
 async fn silence_android_notifications(device_id: String) -> Result<String, String> {
     adb::silence_notifications(&device_id).await
 }
@@ -470,6 +475,7 @@ pub fn run() {
             stop_all_simulations,
             ensure_android_helper,
             open_android_developer_settings,
+            wake_up_android,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

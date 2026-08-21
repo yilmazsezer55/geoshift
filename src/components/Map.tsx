@@ -111,6 +111,8 @@ interface MapProps {
     routeProgress?: number;
     routeCurrentIndex?: number;
     selectionMode: 'start' | 'end' | 'none';
+    forceShowGuide?: boolean;
+    onCloseGuide?: () => void;
 }
 
 // SAFE MapFlyTo - PREVENTS LOOPS
@@ -218,9 +220,19 @@ export default function Map({
     routePath = [],
     routeProgress = 0,
     routeCurrentIndex = 0,
+    forceShowGuide,
+    onCloseGuide,
     startLocation
 }: MapProps) {
     const [overlayMode, setOverlayMode] = useState<'default' | 'guide'>('default');
+
+    // Switch to guide if forced from outside
+    useEffect(() => {
+        if (forceShowGuide) {
+            setOverlayMode('guide');
+        }
+    }, [forceShowGuide]);
+
     const [guideOS, setGuideOS] = useState<'android' | 'ios'>('android');
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearching, setIsSearching] = useState(false);
@@ -415,9 +427,9 @@ export default function Map({
             )}
 
             {/* Device Selection Overlay */}
-            {!isDeviceSelected && (
+            {(forceShowGuide || !isDeviceSelected) && (
                 <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', backdropFilter: 'blur(10px)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {overlayMode === 'default' ? (
+                    {(overlayMode === 'default' && !isDeviceSelected) ? (
                         <div className="floating-panel fade-in" style={{ padding: '40px', width: '440px', textAlign: 'center' }}>
                             <div style={{ width: '80px', height: '80px', borderRadius: '24px', background: 'var(--primary-bg)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
                                 <Smartphone size={40} />
@@ -463,7 +475,10 @@ export default function Map({
                     ) : (
                         <div className="floating-panel fade-in" style={{ padding: '30px', width: '520px', textAlign: 'left', position: 'relative' }}>
                             <button
-                                onClick={() => setOverlayMode('default')}
+                                onClick={() => {
+                                    setOverlayMode('default');
+                                    onCloseGuide?.();
+                                }}
                                 style={{ position: 'absolute', top: '20px', left: '20px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
                             >
                                 <ChevronLeft size={24} />
@@ -499,7 +514,10 @@ export default function Map({
                                 )}
                             </div>
 
-                            <button onClick={() => setOverlayMode('default')} className="btn btn-primary" style={{ width: '100%', marginTop: '20px', height: '48px' }}>Tamam, Anladım</button>
+                            <button onClick={() => {
+                                setOverlayMode('default');
+                                onCloseGuide?.();
+                            }} className="btn btn-primary" style={{ width: '100%', marginTop: '20px', height: '48px' }}>Tamam, Anladım</button>
                         </div>
                     )}
                 </div>

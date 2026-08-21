@@ -137,6 +137,7 @@ function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [showIOSWizard, setShowIOSWizard] = useState(false);
   const [showAndroidWizard, setShowAndroidWizard] = useState(false);
+  const [showGeneralGuide, setShowGeneralGuide] = useState(false);
   const [wizardDevice, setWizardDevice] = useState<Device | null>(null);
   const [initialWizardStep, setInitialWizardStep] = useState<string | undefined>(undefined);
 
@@ -902,6 +903,11 @@ function App() {
     };
     window.addEventListener('open-android-guide', handleOpenAndroidGuide);
 
+    const handleOpenGeneralGuide = () => {
+      setShowGeneralGuide(true);
+    };
+    window.addEventListener('open-general-guide', handleOpenGeneralGuide);
+
     // Auto-refresh devices every 2 seconds (Discovery - Slower)
     const interval = setInterval(() => {
       loadDevices(true);
@@ -977,6 +983,7 @@ function App() {
 
     return () => {
       window.removeEventListener('open-android-guide', handleOpenAndroidGuide);
+      window.removeEventListener('open-general-guide', handleOpenGeneralGuide);
       clearInterval(interval);
       clearInterval(healthInterval);
       unlisten.then(f => f());
@@ -1115,6 +1122,8 @@ function App() {
               routeProgress={routeSimulation.progress}
               routeCurrentIndex={routeSimulation.currentIndex}
               selectionMode={selectionMode}
+              forceShowGuide={showGeneralGuide}
+              onCloseGuide={() => setShowGeneralGuide(false)}
             />
 
             {/* Teleporting Loading Indicator Overlay */}

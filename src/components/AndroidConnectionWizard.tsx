@@ -30,6 +30,7 @@ export default function AndroidConnectionWizard({ device: initialDevice, onCompl
         { id: 'trust_pc', title: 'Bilgisayara İzin Verme (ADB Yetkisi)', icon: <Shield size={18} />, status: 'pending' },
         { id: 'helper', title: 'Yardımcı Uygulama Kurulumu', icon: <Zap size={18} />, status: 'pending' },
         { id: 'mock', title: 'Sahte Konum Uygulaması Seçimi', icon: <Smartphone size={18} />, status: 'pending' },
+        { id: 'wake_up', title: 'Son Adım: Uygulamayı Başlatma', icon: <AlertCircle size={18} />, status: 'pending' },
     ]);
 
     const [isComplete, setIsComplete] = useState(false);
@@ -128,8 +129,22 @@ export default function AndroidConnectionWizard({ device: initialDevice, onCompl
             helpText: 'Geliştirici Seçenekleri > "Sahte konum uygulaması seç" kısmına girin ve "Appium Settings" (GeoShift Helper) uygulamasını seçin.'
         });
 
+        // --- ADIM 5: Uygulamayı Uyandırma ---
+        updateStep('wake_up', {
+            status: 'pending',
+            helpText: 'Uygulama otomatik açılmadıysa "Uygulamayı Aç" butonuna basabilir veya telefondan bir kez tıklayabilirsiniz.'
+        });
+
         setIsComplete(true);
         setIsSearching(false);
+    };
+
+    const handleWakeUp = async () => {
+        try {
+            await invoke('wake_up_android', { deviceId: device.id });
+        } catch (e) {
+            console.error("Wake up failed:", e);
+        }
     };
 
     const handleOpenSettings = async () => {
@@ -155,7 +170,7 @@ export default function AndroidConnectionWizard({ device: initialDevice, onCompl
         <div style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)' }}>
             <div className="floating-panel" style={{ width: '440px', padding: '28px', background: 'white' }}>
                 <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-                    <h2 style={{ margin: '0 0 8px', fontWeight: 800 }}>Android Bağlantı Rehberi</h2>
+                    <h2 style={{ margin: '0 0 8px', fontWeight: 800 }}>Android Bağlanıyor...</h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{device.name} {device.model !== 'Bilinmiyor' ? `(${device.model})` : ''}</p>
                 </div>
 
@@ -177,7 +192,7 @@ export default function AndroidConnectionWizard({ device: initialDevice, onCompl
                             </div>
                             <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-primary)' }}>{step.title}</div>
-                                {step.helpText && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px', lineHeight: 1.5 }}>{step.helpText}</div>}
+                                {step.helpText && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '6px', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{step.helpText}</div>}
                             </div>
                         </div>
                     ))}
@@ -199,12 +214,12 @@ export default function AndroidConnectionWizard({ device: initialDevice, onCompl
 
                     {isComplete ? (
                         <>
-                            <button onClick={handleOpenSettings} style={btnStyle('var(--primary-bg)', 'var(--primary)')}><Settings size={16} /> Ayarları Aç</button>
+                            <button onClick={handleWakeUp} style={btnStyle('var(--primary-bg)', 'var(--primary)')}><Smartphone size={16} /> Uygulamayı Aç</button>
                             <button onClick={onComplete} style={btnStyle('var(--primary)', 'white')}>Tamamlandı, Başlat</button>
                         </>
                     ) : (
                         (steps[0].status === 'action_required' || steps[3].status === 'action_required') && (
-                            <button onClick={handleOpenSettings} style={btnStyle('var(--primary-bg)', 'var(--primary)')}><Settings size={16} /> Ayarları Aç</button>
+                            <button onClick={handleOpenSettings} style={btnStyle('var(--primary-bg)', 'var(--primary)')}><Settings size={16} /> Ayarlar Aç</button>
                         )
                     )}
                 </div>

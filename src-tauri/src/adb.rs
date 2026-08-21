@@ -312,6 +312,37 @@ pub async fn open_developer_settings(device_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Android cihazda yardımcı uygulamayı "derinlemesine" uyandır ve hazır hale getir
+pub async fn wake_up_helper(device_id: &str) -> Result<(), String> {
+    println!("Android yardımcı uygulama uyandırılıyor: {}", device_id);
+
+    let mut adb_cmd = std::process::Command::new("adb");
+
+    // 1. Uygulamanın ana aktivitesini başlat (Uykudan uyandırır)
+    adb_cmd.args(&["-s", device_id, "shell", "am", "start", "-n", "io.appium.settings/.Settings"]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        adb_cmd.creation_flags(0x08000000);
+    }
+    let _ = adb_cmd.output();
+
+    // 2. Kısa bir bekleme (Sistemin uygulamayı hafızaya alması için)
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // 3. Konum servisini doğrudan tetikle
+    let mut service_cmd = std::process::Command::new("adb");
+    service_cmd.args(&["-s", device_id, "shell", "am", "startservice", "io.appium.settings/.LocationService"]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        service_cmd.creation_flags(0x08000000);
+    }
+    let _ = service_cmd.output();
+
+    Ok(())
+}
+
 /// Android cihazda mock location ayarla
 pub async fn set_mock_location(
     device_id: &str,
