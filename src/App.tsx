@@ -169,30 +169,154 @@ function App() {
   }>({ active: false, paused: false, progress: 0, path: [], currentIndex: 0 });
 
   const routeTimerRef = useRef<any>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const isRouteRunning = useRef<boolean>(false);
   const isRoutePaused = useRef<boolean>(false);
   const isDeviceBusyRef = useRef<boolean>(false); // Lock for phone sync
+  const lastSegmentIndexRef = useRef<number>(0);
+
+  // Refs for high-precision movement
+  const simulationDataRef = useRef<{
+    path: Location[];
+    segmentDistances: number[];
+    totalDist: number;
+    currentDistCovered: number;
+    lastTickTimestamp: number;
+    lastDeviceUpdate: number;
+  } | null>(null);
 
   const stopRouteSimulation = () => {
     isRouteRunning.current = false;
     isRoutePaused.current = false;
     isDeviceBusyRef.current = false;
+    lastSegmentIndexRef.current = 0;
+
     if (routeTimerRef.current) {
       clearTimeout(routeTimerRef.current);
       routeTimerRef.current = null;
     }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    simulationDataRef.current = null;
     setRouteSimulation({ active: false, paused: false, progress: 0, path: [], currentIndex: 0 });
     setIsLoading(false);
   };
 
   const pauseRouteSimulation = () => {
     isRoutePaused.current = true;
+    if (simulationDataRef.current) {
+      simulationDataRef.current.lastTickTimestamp = 0; // Reset timestamp for resume
+    }
     setRouteSimulation(prev => ({ ...prev, paused: true }));
   };
 
   const resumeRouteSimulation = () => {
     isRoutePaused.current = false;
+    if (simulationDataRef.current) {
+      simulationDataRef.current.lastTickTimestamp = performance.now();
+    }
     setRouteSimulation(prev => ({ ...prev, paused: false }));
+
+    // Restart animation loop if it was stopped
+    if (!animationFrameRef.current && isRouteRunning.current) {
+      animationFrameRef.current = requestAnimationFrame(simulationStep);
+    }
+  };
+
+  const simulationStep = async (timestamp: number) => {
+    if (!isRouteRunning.current || isRoutePaused.current || !simulationDataRef.current) {
+      animationFrameRef.current = null;
+      return;
+    }
+
+    const data = simulationDataRef.current;
+
+    // Initialize timestamp on first run or resume
+    if (data.lastTickTimestamp === 0) {
+      data.lastTickTimestamp = timestamp;
+      animationFrameRef.current = requestAnimationFrame(simulationStep);
+      return;
+    }
+
+    const deltaTime = timestamp - data.lastTickTimestamp;
+    data.lastTickTimestamp = timestamp;
+
+    const currentSpeedKmh = speedRef.current;
+    const speedKmMs = currentSpeedKmh / (3600 * 1000);
+
+    // 1. UPDATE LOGICAL PROGRESS
+    data.currentDistCovered += deltaTime * speedKmMs;
+    const progress = Math.min(data.currentDistCovered / data.totalDist, 1);
+
+    // 2. FIND CURRENT SEGMENT AND POSITION
+    let segmentIndex = lastSegmentIndexRef.current;
+    const segmentDistances = data.segmentDistances;
+    while (segmentIndex < segmentDistances.length - 1 && segmentDistances[segmentIndex + 1] < data.currentDistCovered) {
+      segmentIndex++;
+    }
+    lastSegmentIndexRef.current = segmentIndex;
+
+    const sDist = segmentDistances[segmentIndex];
+    const eDist = segmentDistances[segmentIndex + 1];
+    const segDist = eDist - sDist;
+    const segProgress = segDist > 0 ? (data.currentDistCovered - sDist) / segDist : 1;
+
+    const p1 = data.path[segmentIndex];
+    const p2 = data.path[segmentIndex + 1];
+
+    // Linear interpolation ensures we stay EXACTLY on the route line
+    const lat = p1.latitude + (p2.latitude - p1.latitude) * segProgress;
+    const lng = p1.longitude + (p2.longitude - p1.longitude) * segProgress;
+
+    // 3. UI UPDATE (Fast, every frame)
+    setCurrentLocation({ latitude: lat, longitude: lng });
+    setRouteSimulation(prev => ({ ...prev, progress, currentIndex: segmentIndex }));
+
+    // 4. DEVICE UPDATE (Throttled, approx every 500ms)
+    if (timestamp - data.lastDeviceUpdate >= 500 && !isDeviceBusyRef.current) {
+      data.lastDeviceUpdate = timestamp;
+      isDeviceBusyRef.current = true;
+
+      const calculateBearing = (sLat: number, sLng: number, dLat: number, dLng: number) => {
+        const sLatRad = sLat * Math.PI / 180;
+        const dLatRad = dLat * Math.PI / 180;
+        const dLngRad = (dLng - sLng) * Math.PI / 180;
+        const y = Math.sin(dLngRad) * Math.cos(dLatRad);
+        const x = Math.cos(sLatRad) * Math.sin(dLatRad) -
+                  Math.sin(sLatRad) * Math.cos(dLatRad) * Math.cos(dLngRad);
+        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+      };
+
+      const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+      setMapRotation(bearing);
+
+      invoke('set_location', {
+        os: selectedDevice!.os,
+        udid: selectedDevice!.id,
+        lat,
+        lng
+      }).finally(() => {
+        isDeviceBusyRef.current = false;
+      });
+    }
+
+    // 5. FINISH CHECK
+    if (progress >= 1) {
+      const final = data.path[data.path.length - 1];
+      // One last forced sync to device
+      await invoke('set_location', { os: selectedDevice!.os, udid: selectedDevice!.id, lat: final.latitude, lng: final.longitude }).catch(() => {});
+
+      setCurrentLocation(final);
+      setRouteSimulation(prev => ({ ...prev, progress: 1 }));
+      stopRouteSimulation();
+      setMessage({ type: 'success', text: 'Hedefe ulaşıldı! 🏁' });
+      return;
+    }
+
+    animationFrameRef.current = requestAnimationFrame(simulationStep);
   };
 
   const startRouteSimulation = async (initialSpeedKmh: number, speedMode: 'walk' | 'run' | 'drive' = 'walk') => {
@@ -228,86 +352,18 @@ function App() {
       }
 
       isRouteRunning.current = true;
-      setRouteSimulation({ active: true, paused: false, progress: 0, path, currentIndex: 0 });
-
-      let currentDistCovered = 0;
-      let lastTickTimestamp = Date.now();
-
-      const runTick = async () => {
-        if (!isRouteRunning.current) return;
-
-        const now = Date.now();
-        const deltaTime = now - lastTickTimestamp;
-        lastTickTimestamp = now;
-
-        if (isRoutePaused.current) {
-          routeTimerRef.current = setTimeout(runTick, 100);
-          return;
-        }
-
-        const currentSpeedKmh = speedRef.current;
-        const speedKmMs = currentSpeedKmh / (3600 * 1000);
-
-        currentDistCovered += deltaTime * speedKmMs;
-        const progress = Math.min(currentDistCovered / totalDist, 1);
-
-        let segmentIndex = 0;
-        while (segmentIndex < segmentDistances.length - 1 && segmentDistances[segmentIndex + 1] < currentDistCovered) {
-          segmentIndex++;
-        }
-
-        if (progress >= 1 || segmentIndex >= path.length - 1) {
-          const final = path[path.length - 1];
-          await invoke('set_location', { os: selectedDevice.os, udid: selectedDevice.id, lat: final.latitude, lng: final.longitude });
-          setCurrentLocation(final);
-          setRouteSimulation(prev => ({ ...prev, progress: 1 }));
-          stopRouteSimulation();
-          setMessage({ type: 'success', text: 'Hedefe ulaşıldı! 🏁' });
-          return;
-        }
-
-        const sDist = segmentDistances[segmentIndex];
-        const eDist = segmentDistances[segmentIndex + 1];
-        const segProgress = (currentDistCovered - sDist) / (eDist - sDist);
-
-        const p1 = path[segmentIndex];
-        const p2 = path[segmentIndex + 1];
-        const lat = p1.latitude + (p2.latitude - p1.latitude) * segProgress;
-        const lng = p1.longitude + (p2.longitude - p1.longitude) * segProgress;
-
-        const calculateBearing = (sLat: number, sLng: number, dLat: number, dLng: number) => {
-          const sLatRad = sLat * Math.PI / 180;
-          const dLatRad = dLat * Math.PI / 180;
-          const dLngRad = (dLng - sLng) * Math.PI / 180;
-          const y = Math.sin(dLngRad) * Math.cos(dLatRad);
-          const x = Math.cos(sLatRad) * Math.sin(dLatRad) -
-                    Math.sin(sLatRad) * Math.cos(dLatRad) * Math.cos(dLngRad);
-          return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-        };
-
-        const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
-
-        // --- REAL-TIME DEVICE SYNC ---
-        // UI updates very fast (100ms), but we only send to the phone if it's not busy.
-        // This ensures the map is fluid even if the USB connection lags.
-        if (!isDeviceBusyRef.current) {
-          isDeviceBusyRef.current = true;
-          invoke('set_location', { os: selectedDevice.os, udid: selectedDevice.id, lat, lng })
-            .finally(() => { isDeviceBusyRef.current = false; });
-        }
-
-        if (isRouteRunning.current) {
-          setCurrentLocation({ latitude: lat, longitude: lng });
-          setMapRotation(bearing);
-          setRouteSimulation(prev => ({ ...prev, progress, currentIndex: segmentIndex }));
-        }
-
-        if (isRouteRunning.current) {
-          routeTimerRef.current = setTimeout(runTick, 100); // 10 FPS for ultra-smooth map
-        }
+      lastSegmentIndexRef.current = 0;
+      simulationDataRef.current = {
+        path,
+        segmentDistances,
+        totalDist,
+        currentDistCovered: 0,
+        lastTickTimestamp: 0,
+        lastDeviceUpdate: 0
       };
 
-      runTick();
+      setRouteSimulation({ active: true, paused: false, progress: 0, path, currentIndex: 0 });
+      animationFrameRef.current = requestAnimationFrame(simulationStep);
 
     } catch (e) {
       console.error("Route simulation failed:", e);
@@ -422,7 +478,7 @@ function App() {
 
   // Recalculate route if mode or points change
   useEffect(() => {
-    if (mode === 'route' && startLocation && selectedLocation) {
+    if (mode === 'route' && startLocation && selectedLocation && !isRouteRunning.current) {
       calculateRoute(startLocation, selectedLocation, speed);
     }
   }, [speed, startLocation, selectedLocation, mode]);
@@ -1124,6 +1180,7 @@ function App() {
               selectionMode={selectionMode}
               forceShowGuide={showGeneralGuide}
               onCloseGuide={() => setShowGeneralGuide(false)}
+              isRouteSimulating={routeSimulation.active}
             />
 
             {/* Teleporting Loading Indicator Overlay */}

@@ -25,6 +25,7 @@ const getUserIcon = (rotation: number = 0) => L.divIcon({
         display: flex;
         align-items: center;
         justify-content: center;
+        transition: transform 0.2s linear; /* Smooth glide between GPS points */
     ">
         <div style="
             background-color: #3b82f6;
@@ -113,33 +114,35 @@ interface MapProps {
     selectionMode: 'start' | 'end' | 'none';
     forceShowGuide?: boolean;
     onCloseGuide?: () => void;
+    isRouteSimulating?: boolean;
 }
 
 // SAFE MapFlyTo - PREVENTS LOOPS
-function MapFlyTo({ center, trigger, zoom = 15, rotation = 0 }: { center: { latitude: number, longitude: number } | null, trigger?: number, zoom?: number, rotation?: number }) {
+function MapFlyTo({ center, trigger, zoom = 15, rotation = 0, isRouteSimulating = false }: { center: { latitude: number, longitude: number } | null, trigger?: number, zoom?: number, rotation?: number, isRouteSimulating?: boolean }) {
     const map = useMap();
     const lastTrigger = useRef(trigger);
 
     useEffect(() => {
         if (!center) return;
-
-        const currentCenter = map.getCenter();
-        const dist = Math.abs(currentCenter.lat - center.latitude) + Math.abs(currentCenter.lng - center.longitude);
         const triggerChanged = trigger !== undefined && trigger !== lastTrigger.current;
 
-        // Move if forced by trigger OR significant distance
-        if (triggerChanged || dist > 0.0001) {
-            map.flyTo([center.latitude, center.longitude], triggerChanged ? 17 : Math.max(map.getZoom(), zoom));
+        if (isRouteSimulating && !triggerChanged) {
+            // Simülasyon aktifken kamerayı marker'la aynı ritimde, kısa süreli panTo ile takip et.
+            // flyTo KULLANMA: kendi easing eğrisiyle marker hareketiyle çakışıp "kayma" yaratıyor.
+            map.panTo([center.latitude, center.longitude], { animate: true, duration: 0.1 });
             lastTrigger.current = trigger;
+        } else {
+            const currentCenter = map.getCenter();
+            const dist = Math.abs(currentCenter.lat - center.latitude) + Math.abs(currentCenter.lng - center.longitude);
+            if (triggerChanged || dist > 0.0001) {
+                map.flyTo([center.latitude, center.longitude], triggerChanged ? 17 : Math.max(map.getZoom(), zoom));
+                lastTrigger.current = trigger;
+            }
         }
 
-        // Handle rotation if supported (e.g. via CSS or a plugin, but standard Leaflet doesn't rotate easily)
-        // For standard Leaflet, we can rotate the container div
         const mapDiv = map.getContainer();
         mapDiv.style.transform = `rotate(${rotation}deg)`;
-        // Note: rotating the div will rotate EVERYTHING including markers.
-        // A better way is using a plugin like Leaflet.Rotate, but for now we will just rotate the icon.
-    }, [center, map, trigger, zoom, rotation]);
+    }, [center, map, trigger, zoom, rotation, isRouteSimulating]);
 
     return null;
 }
@@ -222,6 +225,7 @@ export default function Map({
     routeCurrentIndex = 0,
     forceShowGuide,
     onCloseGuide,
+    isRouteSimulating = false,
     startLocation
 }: MapProps) {
     const [overlayMode, setOverlayMode] = useState<'default' | 'guide'>('default');
@@ -371,6 +375,7 @@ export default function Map({
                 <MapFlyTo
                     center={currentLocation || selectedLocation}
                     trigger={focusTrigger + internalFocusTrigger}
+                    isRouteSimulating={isRouteSimulating}
                 />
 
                 {currentLocation && (
