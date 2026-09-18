@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import './index.css';
 import 'leaflet/dist/leaflet.css';
@@ -88,9 +87,7 @@ function App() {
   // State for all devices
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
-  const [disabledAutoConnectDevices, setDisabledAutoConnectDevices] = useState<Set<string>>(new Set());
   const manualDisconnectRef = useRef(false);
-  const autoConnectPendingRef = useRef<Set<string>>(new Set());
   const locationChangeInProgressRef = useRef(false);
 
   // Track devices that have been successfully paired via USB (persisted in localStorage)
@@ -109,6 +106,8 @@ function App() {
   const [selectedAddress, setSelectedAddress] = useState<string>('');
 
   const [currentLocation, setCurrentLocation] = useState<Location | null>(null);
+  const [hardwareLocation, setHardwareLocation] = useState<Location | null>(null);
+  const [debugInfo, setDebugInfo] = useState<{ rtt: number; lagMeters: number }>({ rtt: 0, lagMeters: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [focusTrigger, setFocusTrigger] = useState(0);
@@ -125,10 +124,6 @@ function App() {
   const speedRef = useRef<number>(5); // Default 5 km/h
 
   const SPEED_KMH = { walk: 5, run: 12, drive: 60 };
-
-  useEffect(() => {
-    speedRef.current = SPEED_KMH[speed];
-  }, [speed]);
 
   // Device Panel & Notification States
   const [showDevicePanel, setShowDevicePanel] = useState(false);
@@ -174,6 +169,7 @@ function App() {
   const isRoutePaused = useRef<boolean>(false);
   const isDeviceBusyRef = useRef<boolean>(false); // Lock for phone sync
   const lastSegmentIndexRef = useRef<number>(0);
+  const emaRttRef = useRef<number>(300); // Measured RTT for look-ahead
 
   // Refs for high-precision movement
   const simulationDataRef = useRef<{
@@ -183,7 +179,23 @@ function App() {
     currentDistCovered: number;
     lastTickTimestamp: number;
     lastDeviceUpdate: number;
+    simulationStartTime: number; // Absolute start for drift prevention
+    distCoveredOnPause: number;   // Distance already covered before last pause
   } | null>(null);
+
+  // Hız değiştiğinde mesafeyi snapshot yap (Sorun 2: geçmiş sürenin yeni hızla çarpılıp atlama yapmasını önler)
+  useEffect(() => {
+    if (simulationDataRef.current && isRouteRunning.current && !isRoutePaused.current) {
+      const data = simulationDataRef.current;
+      if (data.simulationStartTime > 0) {
+        const elapsed = (performance.now() - data.simulationStartTime) / 1000;
+        const oldSpeedKmMs = speedRef.current / (3600 * 1000);
+        data.distCoveredOnPause += (elapsed * 1000) * oldSpeedKmMs;
+        data.simulationStartTime = performance.now();
+      }
+    }
+    speedRef.current = SPEED_KMH[speed];
+  }, [speed]);
 
   const stopRouteSimulation = () => {
     isRouteRunning.current = false;
@@ -201,6 +213,7 @@ function App() {
     }
 
     simulationDataRef.current = null;
+    setHardwareLocation(null);
     setRouteSimulation({ active: false, paused: false, progress: 0, path: [], currentIndex: 0 });
     setIsLoading(false);
   };
@@ -208,7 +221,13 @@ function App() {
   const pauseRouteSimulation = () => {
     isRoutePaused.current = true;
     if (simulationDataRef.current) {
-      simulationDataRef.current.lastTickTimestamp = 0; // Reset timestamp for resume
+      const data = simulationDataRef.current;
+      if (data.simulationStartTime > 0) {
+        const elapsed = (performance.now() - data.simulationStartTime) / 1000;
+        const speedKmMs = speedRef.current / (3600 * 1000);
+        data.distCoveredOnPause += (elapsed * 1000) * speedKmMs;
+      }
+      data.simulationStartTime = 0;
     }
     setRouteSimulation(prev => ({ ...prev, paused: true }));
   };
@@ -216,11 +235,10 @@ function App() {
   const resumeRouteSimulation = () => {
     isRoutePaused.current = false;
     if (simulationDataRef.current) {
-      simulationDataRef.current.lastTickTimestamp = performance.now();
+      simulationDataRef.current.simulationStartTime = performance.now();
     }
     setRouteSimulation(prev => ({ ...prev, paused: false }));
 
-    // Restart animation loop if it was stopped
     if (!animationFrameRef.current && isRouteRunning.current) {
       animationFrameRef.current = requestAnimationFrame(simulationStep);
     }
@@ -233,83 +251,109 @@ function App() {
     }
 
     const data = simulationDataRef.current;
-
-    // Initialize timestamp on first run or resume
-    if (data.lastTickTimestamp === 0) {
-      data.lastTickTimestamp = timestamp;
-      animationFrameRef.current = requestAnimationFrame(simulationStep);
-      return;
+    if (data.simulationStartTime === 0) {
+      data.simulationStartTime = timestamp;
     }
-
-    const deltaTime = timestamp - data.lastTickTimestamp;
-    data.lastTickTimestamp = timestamp;
 
     const currentSpeedKmh = speedRef.current;
     const speedKmMs = currentSpeedKmh / (3600 * 1000);
+    const totalElapsedMs = timestamp - data.simulationStartTime;
 
-    // 1. UPDATE LOGICAL PROGRESS
-    data.currentDistCovered += deltaTime * speedKmMs;
-    const progress = Math.min(data.currentDistCovered / data.totalDist, 1);
+    // 1. CALCULATE ABSOLUTE PROGRESS
+    const distanceJustNow = totalElapsedMs * speedKmMs;
+    const totalDistCovered = Math.min(data.distCoveredOnPause + distanceJustNow, data.totalDist);
+    const progress = totalDistCovered / data.totalDist;
 
-    // 2. FIND CURRENT SEGMENT AND POSITION
-    let segmentIndex = lastSegmentIndexRef.current;
-    const segmentDistances = data.segmentDistances;
-    while (segmentIndex < segmentDistances.length - 1 && segmentDistances[segmentIndex + 1] < data.currentDistCovered) {
-      segmentIndex++;
-    }
-    lastSegmentIndexRef.current = segmentIndex;
+    // Helper: Interpolate coordinates along route at given distance
+    const getCoordinatesAtDistance = (dist: number) => {
+      const clampedDist = Math.max(0, Math.min(dist, data.totalDist));
+      let segIdx = 0;
+      const segDists = data.segmentDistances;
+      while (segIdx < segDists.length - 1 && segDists[segIdx + 1] < clampedDist) {
+        segIdx++;
+      }
+      const sD = segDists[segIdx];
+      const eD = segDists[segIdx + 1] || sD;
+      const segD = eD - sD;
+      const segProg = segD > 0 ? (clampedDist - sD) / segD : 1;
+      const segP1 = data.path[segIdx];
+      const segP2 = data.path[segIdx + 1] || segP1;
+      return {
+        lat: segP1.latitude + (segP2.latitude - segP1.latitude) * segProg,
+        lng: segP1.longitude + (segP2.longitude - segP1.longitude) * segProg,
+        segmentIndex: segIdx,
+        p1: segP1,
+        p2: segP2
+      };
+    };
 
-    const sDist = segmentDistances[segmentIndex];
-    const eDist = segmentDistances[segmentIndex + 1];
-    const segDist = eDist - sDist;
-    const segProgress = segDist > 0 ? (data.currentDistCovered - sDist) / segDist : 1;
+    // 2. UI POSITION & UPDATE
+    const currentPos = getCoordinatesAtDistance(totalDistCovered);
+    setCurrentLocation({ latitude: currentPos.lat, longitude: currentPos.lng });
+    setRouteSimulation(prev => ({ ...prev, progress, currentIndex: currentPos.segmentIndex }));
 
-    const p1 = data.path[segmentIndex];
-    const p2 = data.path[segmentIndex + 1];
-
-    // Linear interpolation ensures we stay EXACTLY on the route line
-    const lat = p1.latitude + (p2.latitude - p1.latitude) * segProgress;
-    const lng = p1.longitude + (p2.longitude - p1.longitude) * segProgress;
-
-    // 3. UI UPDATE (Fast, every frame)
-    setCurrentLocation({ latitude: lat, longitude: lng });
-    setRouteSimulation(prev => ({ ...prev, progress, currentIndex: segmentIndex }));
-
-    // 4. DEVICE UPDATE (Throttled, approx every 500ms)
-    if (timestamp - data.lastDeviceUpdate >= 500 && !isDeviceBusyRef.current) {
+    // 3. DEVICE UPDATE (Throttled approx 1Hz + In-Flight Lock + Look-Ahead Compensation)
+    if (timestamp - data.lastDeviceUpdate >= 1000 && !isDeviceBusyRef.current) {
       data.lastDeviceUpdate = timestamp;
       isDeviceBusyRef.current = true;
+
+      // Look-ahead gecikme telafisi (iMyFone AnyTo mantığı):
+      // Donanım/USB/Ağ iletim gecikmesi (EMA RTT) süresince UI ilerleyecektir.
+      // Cihazın haritada UI ile senkron görünmesi için RTT süresi kadar ilerideki koordinatı gönderiyoruz.
+      const lookAheadMs = Math.min(Math.max(emaRttRef.current, 50), 1200);
+      const lookAheadDistKm = lookAheadMs * speedKmMs;
+      const targetDeviceDist = Math.min(totalDistCovered + lookAheadDistKm, data.totalDist);
+      const devicePos = getCoordinatesAtDistance(targetDeviceDist);
 
       const calculateBearing = (sLat: number, sLng: number, dLat: number, dLng: number) => {
         const sLatRad = sLat * Math.PI / 180;
         const dLatRad = dLat * Math.PI / 180;
         const dLngRad = (dLng - sLng) * Math.PI / 180;
         const y = Math.sin(dLngRad) * Math.cos(dLatRad);
-        const x = Math.cos(sLatRad) * Math.sin(dLatRad) -
-                  Math.sin(sLatRad) * Math.cos(dLatRad) * Math.cos(dLngRad);
+        const x = Math.cos(sLatRad) * Math.sin(dLatRad) - Math.sin(sLatRad) * Math.cos(dLatRad) * Math.cos(dLngRad);
         return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
       };
 
-      const bearing = calculateBearing(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+      const bearing = calculateBearing(devicePos.p1.latitude, devicePos.p1.longitude, devicePos.p2.latitude, devicePos.p2.longitude);
       setMapRotation(bearing);
 
+      const invokeStart = performance.now();
       invoke('set_location', {
         os: selectedDevice!.os,
         udid: selectedDevice!.id,
-        lat,
-        lng
+        lat: devicePos.lat,
+        lng: devicePos.lng,
+        speed: currentSpeedKmh / 3.6,
+        bearing: bearing,
+        altitude: 100.0
+      }).then(() => {
+        const rtt = performance.now() - invokeStart;
+        emaRttRef.current = emaRttRef.current * 0.8 + rtt * 0.2;
+        setHardwareLocation({ latitude: devicePos.lat, longitude: devicePos.lng });
+        setDebugInfo({ rtt: Math.round(emaRttRef.current), lagMeters: Math.round(lookAheadDistKm * 1000) });
+      }).catch(e => {
+        console.error("Hardware update failed:", e);
       }).finally(() => {
         isDeviceBusyRef.current = false;
       });
     }
 
-    // 5. FINISH CHECK
+    // 4. FINISH CHECK
     if (progress >= 1) {
+      isDeviceBusyRef.current = false;
       const final = data.path[data.path.length - 1];
-      // One last forced sync to device
-      await invoke('set_location', { os: selectedDevice!.os, udid: selectedDevice!.id, lat: final.latitude, lng: final.longitude }).catch(() => {});
+      await invoke('set_location', {
+        os: selectedDevice!.os,
+        udid: selectedDevice!.id,
+        lat: final.latitude,
+        lng: final.longitude,
+        speed: 0.0,
+        bearing: 0.0,
+        altitude: 100.0
+      }).catch(() => {});
 
       setCurrentLocation(final);
+      setHardwareLocation(final);
       setRouteSimulation(prev => ({ ...prev, progress: 1 }));
       stopRouteSimulation();
       setMessage({ type: 'success', text: 'Hedefe ulaşıldı! 🏁' });
@@ -319,7 +363,7 @@ function App() {
     animationFrameRef.current = requestAnimationFrame(simulationStep);
   };
 
-  const startRouteSimulation = async (initialSpeedKmh: number, speedMode: 'walk' | 'run' | 'drive' = 'walk') => {
+  const startRouteSimulation = async (_initialSpeedKmh: number, speedMode: 'walk' | 'run' | 'drive' = 'walk') => {
     if (!selectedDevice || !startLocation || !selectedLocation) return;
 
     stopRouteSimulation();
@@ -338,11 +382,8 @@ function App() {
 
       const coordinates = data.routes[0].geometry.coordinates;
       let path: Location[] = coordinates.map((c: any) => ({ latitude: c[1], longitude: c[0] }));
-
-      // Ensure exact start/end snapping at the visual level
       path = [startLocation, ...path, selectedLocation];
 
-      // PRE-CALCULATE DISTANCES for stability
       let totalDist = 0;
       const segmentDistances: number[] = [0];
       for (let i = 0; i < path.length - 1; i++) {
@@ -359,16 +400,36 @@ function App() {
         totalDist,
         currentDistCovered: 0,
         lastTickTimestamp: 0,
-        lastDeviceUpdate: 0
+        lastDeviceUpdate: 0,
+        simulationStartTime: 0,
+        distCoveredOnPause: 0
       };
 
+      // Cihazı hemen rotanın başlangıç noktasına ışınla (hızlı sync ve atlamayı engelleme)
+      try {
+        await invoke('set_location', {
+          os: selectedDevice.os,
+          udid: selectedDevice.id,
+          lat: startLocation.latitude,
+          lng: startLocation.longitude,
+          speed: 0.0,
+          bearing: 0.0,
+          altitude: 100.0
+        });
+        setCurrentLocation(startLocation);
+        setHardwareLocation(startLocation);
+      } catch (err) {
+        console.warn("Initial route teleport warning:", err);
+      }
+
+      setIsLoading(false);
       setRouteSimulation({ active: true, paused: false, progress: 0, path, currentIndex: 0 });
       animationFrameRef.current = requestAnimationFrame(simulationStep);
 
     } catch (e) {
       console.error("Route simulation failed:", e);
       stopRouteSimulation();
-      setMessage({ type: 'error', text: String(e) || 'Rota başlatılamadı.' });
+      setMessage({ type: 'error', text: 'Rota başlatılamadı.' });
     }
   };
 
@@ -379,11 +440,8 @@ function App() {
   useEffect(() => {
     const root = document.getElementById('root');
     if (!root) return;
-    if (showSplash) {
-      root.classList.add('app-splash-active');
-    } else {
-      root.classList.remove('app-splash-active');
-    }
+    if (showSplash) { root.classList.add('app-splash-active'); }
+    else { root.classList.remove('app-splash-active'); }
     return () => root.classList.remove('app-splash-active');
   }, [showSplash]);
 
@@ -393,7 +451,6 @@ function App() {
     setShowIOSWizard(true);
   };
 
-  // Deduplicate devices by ID (UDID/Serial) to ensure clean UI, prioritizing USB connection if both exist
   const uniqueDevices = Array.from(devices.reduce((acc, dev) => {
     const existing = acc.get(dev.id);
     if (!existing || (dev.connectionMode === 'usb' && existing.connectionMode !== 'usb')) {
@@ -402,23 +459,17 @@ function App() {
     return acc;
   }, new Map<string, Device>()).values());
 
-  // Reset rotation when switching to Teleport or Route modes to fix click accuracy
   useEffect(() => {
-    if (mode !== 'joystick') {
-      setMapRotation(0);
-    }
+    if (mode !== 'joystick') { setMapRotation(0); }
   }, [mode]);
 
-  // Reverse Geocoding Helper
   const fetchAddress = async (loc: Location): Promise<string> => {
     try {
       const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${loc.latitude}&lon=${loc.longitude}&zoom=18&addressdetails=1`, {
         headers: { 'User-Agent': 'GeoShift-App' }
       });
       const data = await response.json();
-
       if (data.error) throw new Error(data.error);
-
       const addr = data.address;
       if (addr) {
         const parts = [];
@@ -426,12 +477,10 @@ function App() {
         if (addr.house_number) parts.push(addr.house_number);
         if (parts.length === 0 && (addr.suburb || addr.neighbourhood)) parts.push(addr.suburb || addr.neighbourhood);
         if (parts.length === 0 && addr.city) parts.push(addr.city);
-
         return parts.join(' ') || data.display_name.split(',')[0];
       }
       return data.display_name.split(',')[0] || `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
     } catch (e) {
-      console.error("Reverse geocode failed", e);
       return `${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
     }
   };
@@ -440,58 +489,29 @@ function App() {
     const config = ROUTING_CONFIG[speedMode];
     const url = `${config.baseUrl}/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&continue_straight=${config.continueStraight}&radiuses=${config.radius};${config.radius}`;
 
-    console.log(`[ROUTING] Fetching route from ${config.baseUrl}...`);
     try {
       const res = await fetch(url);
       const data = await res.json();
-
-      if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
-        throw new Error(data.message || "Yol tarifi bulunamadı.");
-      }
-
+      if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) { throw new Error("Rota bulunamadı"); }
       const route = data.routes[0];
       const coordinates = route.geometry.coordinates;
       let path: Location[] = coordinates.map((c: any) => ({ latitude: c[1], longitude: c[0] }));
-
-      // Ensure exact start/end snapping
       path = [start, ...path, end];
-
-      console.log(`[ROUTING] Route found! Points: ${path.length}`);
-      setRouteSimulation(prev => ({
-        ...prev,
-        path,
-        currentIndex: 0,
-        progress: 0,
-        metadata: {
-          distance: route.distance,
-          duration: route.duration,
-          startSnap: data.waypoints?.[0]?.distance,
-          endSnap: data.waypoints?.[1]?.distance
-        }
-      }));
+      setRouteSimulation(prev => ({ ...prev, path, currentIndex: 0, progress: 0 }));
       return path;
     } catch (e) {
-      console.error("[ROUTING] Failed:", e);
       return null;
     }
   };
 
-  // Recalculate route if mode or points change
   useEffect(() => {
     if (mode === 'route' && startLocation && selectedLocation && !isRouteRunning.current) {
       calculateRoute(startLocation, selectedLocation, speed);
     }
   }, [speed, startLocation, selectedLocation, mode]);
 
-  // Handle Map Clicks for A/B Point selection
   const handleLocationSelect = async (loc: Location | null, mode_param?: 'start' | 'end', addr?: string) => {
-    if (!loc) {
-      setSelectedLocation(null);
-      setSelectedAddress('');
-      return;
-    }
-
-    // If we're not in route mode, we only care about Point B (selectedLocation)
+    if (!loc) { setSelectedLocation(null); setSelectedAddress(''); return; }
     if (mode !== 'route') {
       setSelectedLocation(loc);
       setSelectionMode('none');
@@ -505,78 +525,57 @@ function App() {
     }
 
     const activeMode = mode_param || selectionMode;
-
     if (activeMode === 'start') {
       setStartLocation(loc);
       setSelectionMode('none');
       if (addr) setStartAddress(addr);
-      else {
-        setStartAddress("Adres alınıyor...");
-        const a = await fetchAddress(loc);
-        setStartAddress(a);
-      }
+      else { setStartAddress("Adres alınıyor..."); const a = await fetchAddress(loc); setStartAddress(a); }
     } else if (activeMode === 'end') {
       setSelectedLocation(loc);
       setSelectionMode('none');
       if (addr) setSelectedAddress(addr);
-      else {
-        setSelectedAddress("Adres alınıyor...");
-        const a = await fetchAddress(loc);
-        setSelectedAddress(a);
-      }
+      else { setSelectedAddress("Adres alınıyor..."); const a = await fetchAddress(loc); setSelectedAddress(a); }
     } else {
-      // Circular behavior in Route mode: A -> B -> New A
       if (startLocation && selectedLocation) {
-        // Both exist, start fresh with new A
-        setStartLocation(loc);
-        setSelectedLocation(null);
-        setSelectedAddress('');
-        const a = await fetchAddress(loc);
-        setStartAddress(a);
+        setStartLocation(loc); setSelectedLocation(null); setSelectedAddress(''); const a = await fetchAddress(loc); setStartAddress(a);
       } else if (!startLocation) {
-        // No A, set A
-        setStartLocation(loc);
-        const a = await fetchAddress(loc);
-        setStartAddress(a);
+        setStartLocation(loc); const a = await fetchAddress(loc); setStartAddress(a);
       } else {
-        // A exists, set B
-        setSelectedLocation(loc);
-        const a = await fetchAddress(loc);
-        setSelectedAddress(a);
+        setSelectedLocation(loc); const a = await fetchAddress(loc); setSelectedAddress(a);
       }
     }
   };
 
-  // Silence phone notifications on device selection (Android only)
+  const swapLocations = () => {
+    if (routeSimulation.active) return;
+    const prevStartLoc = startLocation;
+    const prevStartAddr = startAddress;
+    setStartLocation(selectedLocation);
+    setStartAddress(selectedAddress);
+    setSelectedLocation(prevStartLoc);
+    setSelectedAddress(prevStartAddr);
+  };
+
   useEffect(() => {
     if (selectedDevice && selectedDevice.os === 'android') {
-      invoke('silence_android_notifications', { deviceId: selectedDevice.id })
-        .then(() => console.log("Phone notifications silenced"))
-        .catch(err => console.error("Could not silence phone:", err));
+      invoke('silence_android_notifications', { deviceId: selectedDevice.id }).catch(() => {});
     }
   }, [selectedDevice]);
 
-  // Manage cooldown countdown
   useEffect(() => {
     if (cooldownTime > 0) {
-      const timer = window.setInterval(() => {
-        setCooldownTime(prev => Math.max(0, prev - 1));
-      }, 1000);
+      const timer = window.setInterval(() => { setCooldownTime(prev => Math.max(0, prev - 1)); }, 1000);
       return () => clearInterval(timer);
     }
   }, [cooldownTime]);
 
-  // Auto-clear message
   useEffect(() => {
     if (message) {
-      const timer = setTimeout(() => {
-        setMessage(null);
-      }, 3000); // 3 seconds
+      const timer = setTimeout(() => { setMessage(null); }, 3000);
       return () => clearTimeout(timer);
     }
   }, [message]);
 
-  // Cihazları yükle (Android & iOS)
   const loadDevices = async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
@@ -585,52 +584,17 @@ function App() {
         invoke<any[]>('get_ios_devices')
       ]);
 
-      if (androidResult.status === 'rejected') {
-        console.error("Android scan failed:", androidResult.reason);
-        if (!silent) setMessage({ type: 'error', text: `Android tarama hatası: ${androidResult.reason}` });
-      }
-
-      if (iosResult.status === 'rejected') {
-        console.error("iOS scan failed:", iosResult.reason);
-        if (!silent) setMessage({ type: 'error', text: `iOS tarama hatası: ${iosResult.reason}` });
-      }
-
       const rawAndroid = androidResult.status === 'fulfilled' ? androidResult.value : [];
       const rawIos = iosResult.status === 'fulfilled' ? iosResult.value : [];
-
-      console.log("Raw Android:", rawAndroid);
-      console.log("Raw iOS:", rawIos);
-
-      // Group devices by ID
       const deviceMap = new Map<string, Device>();
 
-      console.log('--- RAW DISCOVERY DATA ---');
-      rawAndroid.forEach((d: any) => {
-          console.log(`Android Raw: Name="${d.name}", Serial="${d.serial || d.id}", ContainerId="${d.container_id || 'N/A'}", Status="${d.status}"`);
-      });
-
-      // Process All Discovered Devices
       [...rawAndroid, ...rawIos].forEach((d: any) => {
         const id = d.udid || d.id;
         const os = d.os;
         const name = d.name || d.model || (os === 'android' ? 'Android Cihazı' : 'iPhone');
         const mode = (d.connection_mode || d.connectionMode || 'usb') as 'usb' | 'wifi';
-
-        // Canonical Key: Hardware ID
         const mergeKey = `${os}:${id}`;
-
         const existing = deviceMap.get(mergeKey);
-
-        // Authority Merge: If ADB device (Status != Missing) exists, it should overwrite MTP device
-        if (existing && existing.status === 'Missing' && d.status !== 'Missing') {
-            console.log(`[MERGE] ADB device ${id} is overwriting MTP placeholder.`);
-        }
-
-        if (existing && existing.status !== 'Missing' && d.status === 'Missing') {
-            // Don't let a "Missing" placeholder overwrite a live ADB connection
-            return;
-        }
-
         const availableModes = existing ? [...(existing.availableModes || []), mode] : [mode];
 
         deviceMap.set(mergeKey, {
@@ -646,68 +610,18 @@ function App() {
         } as Device);
       });
 
-      const finalDevices = Array.from(deviceMap.values());
-      console.log('--- CANONICAL DEVICES ---');
-      finalDevices.forEach(d => {
-          console.log(`Canonical: OS=${d.os}, ID=${d.id}, Name="${d.name}", Model="${d.model}", Status="${d.status}"`);
-      });
-      console.log(`UI Render Count (Android): ${finalDevices.filter(d => d.os === 'android').length}`);
-
       const storedPaired = localStorage.getItem('usbPairedDevices');
       const pairedDeviceIds = storedPaired ? new Set(JSON.parse(storedPaired)) : new Set();
+      deviceMap.forEach((device) => { device.isPaired = device.usbId ? pairedDeviceIds.has(device.usbId) : false; });
 
-      deviceMap.forEach((device) => {
-        device.isPaired = device.usbId ? pairedDeviceIds.has(device.usbId) : false;
-      });
+      const allDevices = Array.from(deviceMap.values()).map(d => ({ ...d, uniqueId: `${d.id}-${d.connectionMode}` }));
+      setDevices(allDevices as any);
 
-      const allDevices = Array.from(deviceMap.values()).map(d => ({
-        ...d,
-        uniqueId: `${d.id}-${d.connectionMode}`
-      }));
-
-      // Filter Logic
-      const hasSpecificAndroid = allDevices.some(d => d.os === 'android' && d.id !== 'generic-android' && d.name !== 'Android Cihazı' && d.name !== 'Android');
-      const filteredDevices = allDevices.filter(d => {
-        if (d.os === 'android' && hasSpecificAndroid && (d.name === 'Android Cihazı' || d.name === 'Android')) {
-          return false;
-        }
-        return true;
-      });
-
-      setDevices(filteredDevices as any);
-
-      setDevices(filteredDevices as any);
-
-      // Update Disabled Auto-Connect Set: Remove devices that are no longer physically connected
-      const currentlyConnectedIds = new Set(filteredDevices.map(d => d.id));
-      setDisabledAutoConnectDevices(prev => {
-        let changed = false;
-        const next = new Set(prev);
-        prev.forEach(id => {
-          if (!currentlyConnectedIds.has(id)) {
-            next.delete(id);
-            changed = true;
-          }
-        });
-        return changed ? next : prev;
-      });
-
-      // --- AUTO-DETECT DISCONNECTION FOR SELECTED DEVICE ---
       if (selectedDevice) {
-        const stillConnected = filteredDevices.some(d => d.id === selectedDevice.id);
-        if (!stillConnected) {
-          if (locationChangeInProgressRef.current) {
-            console.warn(`[AUTO-REFRESH] Skipping disconnect detection during location change for ${selectedDevice.id}.`);
-          } else {
-            console.warn(`[AUTO-REFRESH] Selected device ${selectedDevice.id} disappeared.`);
-            setMessage({ type: 'error', text: '⚠️ Cihaz bağlantısı koptu! (Otomatik Tespit)' });
-
-            if (selectedDevice.os === 'ios' && !manualDisconnectRef.current) {
-              // Optional: Open wizard for help
-              openWizard(selectedDevice, 'service');
-            }
-            setSelectedDevice(null);
-          }
+        const stillConnected = allDevices.some(d => d.id === selectedDevice.id);
+        if (!stillConnected && !locationChangeInProgressRef.current) {
+          setMessage({ type: 'error', text: '⚠️ Cihaz bağlantısı koptu!' });
+          setSelectedDevice(null);
         }
       }
 
@@ -715,7 +629,6 @@ function App() {
         setHasNewDeviceNotification(true);
       }
     } catch (error) {
-      if (!silent) setMessage({ type: 'error', text: `Hata: ${error}` });
       console.error(error);
     } finally {
       if (!silent) setIsLoading(false);
@@ -724,11 +637,6 @@ function App() {
 
   const handleStopAllSimulations = async () => {
     manualDisconnectRef.current = true;
-
-    // Disable auto-connect for all current devices
-    const currentDeviceIds = uniqueDevices.map(d => d.id);
-    setDisabledAutoConnectDevices(new Set(currentDeviceIds));
-
     try {
       await invoke('stop_all_simulations');
       setSelectedLocation(null);
@@ -736,213 +644,87 @@ function App() {
       setSelectedDevice(null);
       setShowDevicePanel(false);
       setMessage({ type: 'success', text: 'Tüm simülasyonlar durduruldu.' });
-
-      // Refresh devices to update statuses
       await loadDevices();
-
-      // Allow auto-connect again after a short delay (e.g. if they pull cable and re-plug)
-      setTimeout(() => {
-        manualDisconnectRef.current = false;
-      }, 3000);
+      setTimeout(() => { manualDisconnectRef.current = false; }, 3000);
     } catch (error) {
-      console.error('Failed to stop all simulations:', error);
-      setMessage({ type: 'error', text: 'Durdurma sırasında bir hata oluştu.' });
+      setMessage({ type: 'error', text: 'Durdurma hatası.' });
       manualDisconnectRef.current = false;
     }
   };
 
   const handleDisconnectDevice = async (device: Device) => {
     manualDisconnectRef.current = true;
-    autoConnectPendingRef.current.delete(device.id);
-
-    // Disable auto-connect for this specific device
-    setDisabledAutoConnectDevices(prev => new Set(prev).add(device.id));
-
     try {
       await invoke('clear_location', { os: device.os, udid: device.id });
-
-      if (selectedDevice?.id === device.id) {
-        setSelectedDevice(null);
-        setShowDevicePanel(false);
-      }
-
+      if (selectedDevice?.id === device.id) { setSelectedDevice(null); setShowDevicePanel(false); }
       setMessage({ type: 'success', text: `${device.name} bağlantısı kesildi.` });
-
       await loadDevices();
-
-      setTimeout(() => {
-        manualDisconnectRef.current = false;
-      }, 3000);
-    } catch (error) {
-      console.error('Failed to disconnect device:', error);
-      setMessage({ type: 'error', text: 'Cihaz bağlantısı kesilemedi.' });
-      manualDisconnectRef.current = false;
-    }
+      setTimeout(() => { manualDisconnectRef.current = false; }, 3000);
+    } catch (error) { manualDisconnectRef.current = false; }
   };
 
   const handleDeviceSelect = async (device: Device) => {
     manualDisconnectRef.current = false;
-
-    // Re-enable auto-connect for this device since user is manually selecting it
-    setDisabledAutoConnectDevices(prev => {
-      if (prev.has(device.id)) {
-        const next = new Set(prev);
-        next.delete(device.id);
-        return next;
-      }
-      return prev;
-    });
-
-    // If connected via USB, mark device as paired
     if (device.connectionMode === 'usb' && device.usbId) {
-      console.log('[USB PAIRING] Saving to localStorage on CONNECT:', device.usbId);
       const newPairedDevices = new Set(usbPairedDevices);
       newPairedDevices.add(device.usbId);
       setUsbPairedDevices(newPairedDevices);
       localStorage.setItem('usbPairedDevices', JSON.stringify(Array.from(newPairedDevices)));
-
-      // Reload devices to update isPaired status immediately
       setTimeout(() => loadDevices(), 200);
     }
-
     setShowDevicePanel(false);
-
-    // Trigger Setup Wizard immediately based on OS
-    if (device.os === 'ios') {
-      setWizardDevice(device);
-      setShowIOSWizard(true);
-    } else if (device.os === 'android') {
-      setWizardDevice(device);
-      setShowAndroidWizard(true);
-    } else {
-      setSelectedDevice(device);
-    }
+    if (device.os === 'ios') { setWizardDevice(device); setShowIOSWizard(true); }
+    else if (device.os === 'android') { setWizardDevice(device); setShowAndroidWizard(true); }
+    else { setSelectedDevice(device); }
   };
 
   const handleWizardComplete = (developerModeEnabled: boolean) => {
     setShowIOSWizard(false);
-
     if (wizardDevice) {
-      // Update device with developer mode status
-      setDevices(prevDevices =>
-        prevDevices.map(d =>
-          d.id === wizardDevice.id
-            ? { ...d, developerModeEnabled, developerModeChecked: true }
-            : d
-        )
-      );
-
-      const updatedDevice = { ...wizardDevice, developerModeEnabled, developerModeChecked: true };
-      setSelectedDevice(updatedDevice);
-
-      if (!developerModeEnabled) {
-        setMessage({
-          type: 'error',
-          text: '⚠️ Developer Mode kapalı. Konum değiştirme çalışmayacak.'
-        });
-      } else {
-        setMessage({ type: 'success', text: '✅ iOS cihaz başarıyla bağlandı!' });
-      }
+      setDevices(prev => prev.map(d => d.id === wizardDevice.id ? { ...d, developerModeEnabled, developerModeChecked: true } : d));
+      const updated = { ...wizardDevice, developerModeEnabled, developerModeChecked: true };
+      setSelectedDevice(updated);
+      if (!developerModeEnabled) { setMessage({ type: 'error', text: '⚠️ Developer Mode kapalı.' }); }
+      else { setMessage({ type: 'success', text: '✅ iOS cihaz hazır!' }); }
     }
-
     setWizardDevice(null);
   };
 
-  const handleWizardCancel = () => {
-    setShowIOSWizard(false);
-    setWizardDevice(null);
-  };
-
-  const handleAcceptDisclaimer = () => {
-    localStorage.setItem('geoshift_disclaimer_accepted', 'true');
-    setHasAcceptedDisclaimer(true);
-  };
-
-
-  // Konumu değiştir (Teleport)
   const changeLocation = async () => {
     if (!selectedDevice || !selectedLocation) {
       setMessage({ type: 'error', text: 'Lütfen cihaz ve konum seçin!' });
       return;
     }
 
-    // iOS developer mode check
-    if (selectedDevice.os === 'ios') {
-      if (selectedDevice.developerModeChecked && !selectedDevice.developerModeEnabled) {
-        setMessage({
-          type: 'error',
-          text: '❌ iOS Developer Mode kapalı! Ayarlar → Gizlilik ve Güvenlik → Developer Mode → Aç. Sonra cihazı yeniden başlatın.'
-        });
-        return;
-      }
+    if (selectedDevice.os === 'ios' && selectedDevice.developerModeChecked && !selectedDevice.developerModeEnabled) {
+      setMessage({ type: 'error', text: '❌ iOS Developer Mode kapalı!' });
+      return;
     }
 
     locationChangeInProgressRef.current = true;
     setIsLoading(true);
-    setMessage(null); // Clear previous messages while loading banner displays
+    setMessage(null);
     try {
-      const before = { ...currentLocation };
-      console.log('--- iOS SPOOF VERIFICATION START ---');
-      console.log('Target Device:', selectedDevice.name, `(${selectedDevice.id})`);
-      console.log('Before Coordinates:', before.latitude, before.longitude);
-      console.log('Target Coordinates:', selectedLocation.latitude, selectedLocation.longitude);
-
-      await invoke('set_location', {
-        os: selectedDevice.os,
-        udid: selectedDevice.id,
-        lat: selectedLocation.latitude,
-        lng: selectedLocation.longitude
-      });
-
-      // Wait 3 seconds for the device/OS to update its internal state
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      console.log('[SPOOF] Command sent. Simulation should be active.');
-
-      // Verification: Check if the device is still reachable
-      const isAlive = await invoke<boolean>('check_device_health', {
-          os: selectedDevice.os,
-          udid: selectedDevice.id,
-          requireUsb: selectedDevice.connectionMode === 'usb'
-      });
-
-      console.log('[VERIFY] Device still connected:', isAlive);
-      console.log('[VERIFY] Target applied in UI.');
-      console.log('--- iOS SPOOF VERIFICATION END ---');
-
-      setCurrentLocation(selectedLocation);
-
-      // Reset selected location to null after arrival
+      const target = { ...selectedLocation };
+      setCurrentLocation(target);
       setSelectedLocation(null);
       setSelectedAddress('');
 
-      // Sequential delay so the loading banner fades out before success message pops up
-      setTimeout(() => {
-        setMessage({ type: 'success', text: 'Konum başarıyla ışınlandı! 📍' });
-      }, 100);
-    } catch (error) {
-      const errorMsg = String(error);
-      console.error('Teleport failed:', errorMsg);
+      // Send with all required params
+      await invoke('set_location', {
+        os: selectedDevice.os,
+        udid: selectedDevice.id,
+        lat: target.latitude,
+        lng: target.longitude,
+        speed: 0.0,
+        bearing: 0.0,
+        altitude: 100.0
+      });
 
-      if (selectedDevice.os === 'android') {
-          setMessage({ type: 'error', text: '❌ Konum değiştirilemedi. Kurulum yapılıyor...' });
-          setTimeout(() => {
-              setWizardDevice(selectedDevice);
-              setShowAndroidWizard(true);
-          }, 1000);
-      } else if (errorMsg.includes('Developer Mode') || errorMsg.includes('developer mode')) {
-        setMessage({ type: 'error', text: '❌ Developer Mode kapalı! Sihirbaz başlatılıyor...' });
-        setTimeout(() => openWizard(selectedDevice, 'developer'), 1500);
-      } else if (errorMsg.includes('trust') || errorMsg.includes('Trust') || errorMsg.includes('lockdown') || errorMsg.includes('lock')) {
-        setMessage({ type: 'error', text: '❌ Cihaz kilitli veya güvenilmiyor! Sihirbaz başlatılıyor...' });
-        setTimeout(() => openWizard(selectedDevice, 'device'), 1500);
-      } else {
-        setMessage({ type: 'error', text: `Hata: ${error}. Bağlantıyı kontrol edin.` });
-        // Optional: Open wizard at 'service' step if it seems like a driver issue
-        if (errorMsg.includes('device not found') || errorMsg.includes('communication')) {
-          setTimeout(() => openWizard(selectedDevice, 'service'), 1500);
-        }
-      }
+      setMessage({ type: 'success', text: 'Konum başarıyla ışınlandı! 📍' });
+    } catch (error) {
+      console.error('Teleport failed:', error);
+      setMessage({ type: 'error', text: `Konum güncellenemedi: ${error}` });
     } finally {
       locationChangeInProgressRef.current = false;
       setIsLoading(false);
@@ -951,25 +733,13 @@ function App() {
 
   useEffect(() => {
     loadDevices();
-
-    // Listen for manual guide request
     const handleOpenAndroidGuide = () => {
       setWizardDevice({ id: 'generic-android', name: 'Android Cihaz', model: 'Bilinmiyor', os: 'android', status: 'Missing', connectionMode: 'usb' });
       setShowAndroidWizard(true);
     };
     window.addEventListener('open-android-guide', handleOpenAndroidGuide);
+    const interval = setInterval(() => loadDevices(true), 2000);
 
-    const handleOpenGeneralGuide = () => {
-      setShowGeneralGuide(true);
-    };
-    window.addEventListener('open-general-guide', handleOpenGeneralGuide);
-
-    // Auto-refresh devices every 2 seconds (Discovery - Slower)
-    const interval = setInterval(() => {
-      loadDevices(true);
-    }, 2000);
-
-    // ACTIVE HEALTH CHECK (500ms) - Instant Disconnection Detection
     const healthInterval = setInterval(async () => {
       if (selectedDevice) {
         try {
@@ -978,347 +748,125 @@ function App() {
             udid: selectedDevice.id,
             requireUsb: selectedDevice.connectionMode === 'usb'
           });
-
-          // Graceful Wi-Fi Fallback
           if (!isAlive && selectedDevice.connectionMode === 'usb') {
-             const isWifiAlive = await invoke<boolean>('check_device_health', {
-                os: selectedDevice.os,
-                udid: selectedDevice.id,
-                requireUsb: false
-             });
-
-             if (isWifiAlive) {
-                 console.log(`[HEALTH-CHECK] Device ${selectedDevice.id} lost USB, falling back to Wi-Fi`);
-                 setSelectedDevice({ ...selectedDevice, connectionMode: 'wifi' });
-                 setMessage({ type: 'info', text: 'Kablo çıkarıldı, Wi-Fi üzerinden devam ediliyor...' });
-                 isAlive = true; // Prevent disconnect
-             }
+            const isWifiAlive = await invoke<boolean>('check_device_health', { os: selectedDevice.os, udid: selectedDevice.id, requireUsb: false });
+            if (isWifiAlive) { setSelectedDevice({ ...selectedDevice, connectionMode: 'wifi' }); isAlive = true; }
           }
-
-          if (!isAlive && !manualDisconnectRef.current && !disabledAutoConnectDevices.has(selectedDevice.id)) {
-            if (locationChangeInProgressRef.current) {
-              console.warn(`[HEALTH-CHECK] Skipping disconnect detection during location change for ${selectedDevice.id}.`);
-            } else {
-              console.warn(`[HEALTH-CHECK] Device ${selectedDevice.id} lost!`);
-              setMessage({ type: 'error', text: '⚠️ Cihaz bağlantısı koptu!' });
-
-              if (selectedDevice.os === 'ios') {
-                openWizard(selectedDevice, 'service');
-              }
-              setSelectedDevice(null);
-              // Force refresh to update list
-              loadDevices(true);
-            }
+          if (!isAlive && !manualDisconnectRef.current && !locationChangeInProgressRef.current) {
+            setSelectedDevice(null);
+            loadDevices(true);
           }
-        } catch (e) {
-          console.error("Health check failed:", e);
-        }
+        } catch (e) { console.error(e); }
       }
     }, 500);
 
-    // Listen for device disconnection (Professional Heartbeat - Active Simulation)
-    const unlisten = listen<string>('device-lost', (event) => {
-      const lostUdid = event.payload;
-        if (locationChangeInProgressRef.current) {
-          console.warn(`[HEARTBEAT] Ignoring device-lost event during location change for ${lostUdid}.`);
-          return;
-        }
-
-      // If the lost device is our selected device, reset the state
-      setSelectedDevice(current => {
-        if (current && current.id === lostUdid && !manualDisconnectRef.current && !disabledAutoConnectDevices.has(lostUdid)) {
-          console.warn(`[HEARTBEAT] Active device lost: ${lostUdid}`);
-          setMessage({ type: 'error', text: '⚠️ Cihaz bağlantısı kesildi! Sihirbaz başlatılıyor...' });
-          // Auto-open wizard for redirection
-          openWizard(current, 'service');
-          return null;
-        }
-        return current;
-      });
-    });
-
     return () => {
       window.removeEventListener('open-android-guide', handleOpenAndroidGuide);
-      window.removeEventListener('open-general-guide', handleOpenGeneralGuide);
       clearInterval(interval);
       clearInterval(healthInterval);
-      unlisten.then(f => f());
     };
   }, [selectedDevice]);
-
-
-
 
   return (
     <>
       {showSplash && <Splash onFinish={() => setShowSplash(false)} />}
 
       {!showSplash && !hasAcceptedDisclaimer && (
-        <LegalDisclaimer onAccept={handleAcceptDisclaimer} />
+        <LegalDisclaimer onAccept={() => { localStorage.setItem('geoshift_disclaimer_accepted', 'true'); setHasAcceptedDisclaimer(true); }} />
       )}
 
-      {/* iOS Connection Wizard */}
       {showIOSWizard && wizardDevice && (
-        <IOSConnectionWizard
-          device={wizardDevice}
-          onComplete={handleWizardComplete}
-          onCancel={handleWizardCancel}
-          initialStepId={initialWizardStep}
-        />
+        <IOSConnectionWizard device={wizardDevice} onComplete={handleWizardComplete} onCancel={() => setShowIOSWizard(false)} initialStepId={initialWizardStep} />
       )}
 
-      {/* Android Connection Wizard */}
       {showAndroidWizard && wizardDevice && (
         <AndroidConnectionWizard
           device={wizardDevice}
-          onComplete={() => {
-            setSelectedDevice(wizardDevice);
-            setShowAndroidWizard(false);
-            setWizardDevice(null);
-            setMessage({ type: 'success', text: '✅ Android cihaz hazır!' });
-          }}
-          onCancel={() => {
-            setShowAndroidWizard(false);
-            setWizardDevice(null);
-          }}
+          onComplete={() => { setSelectedDevice(wizardDevice); setShowAndroidWizard(false); setWizardDevice(null); setMessage({ type: 'success', text: '✅ Android cihaz hazır!' }); }}
+          onCancel={() => { setShowAndroidWizard(false); setWizardDevice(null); }}
         />
       )}
 
-      <div className={`app-container ${showSplash ? 'app-splash-active' : ''}`} style={{
-        height: '100%',
-        width: '100%',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        borderRadius: 'var(--radius-lg)',
-        background: 'var(--bg-primary)'
-      }}>
-          <CustomTitlebar setMessage={setMessage} />
+      <div className={`app-container ${showSplash ? 'app-splash-active' : ''}`} style={{ height: '100%', width: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative', borderRadius: 'var(--radius-lg)', background: 'var(--bg-primary)' }}>
+        <CustomTitlebar setMessage={setMessage} />
 
-          {/* Message Banner (Toast) */}
-          {message && !isLoading && (
-            <div style={{
-              position: 'absolute',
-              top: '68px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 99998,
-              padding: '10px 18px',
-              borderRadius: '30px',
-              background: 'rgba(15, 23, 42, 0.92)',
-              backdropFilter: 'blur(16px)',
-              color: '#ffffff',
-              border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.4)' : message.type === 'error' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.4)'}`,
-              boxShadow: '0 12px 32px rgba(0,0,0,0.3), 0 0 15px rgba(0,0,0,0.1)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              animation: 'fadeUp 0.2s ease-out'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {message.type === 'success' && <CheckCircle2 size={18} style={{ color: '#10b981' }} />}
-                {message.type === 'error' && <AlertCircle size={18} style={{ color: '#ef4444' }} />}
-                {message.type === 'info' && <Info size={18} style={{ color: '#3b82f6' }} />}
-                <span>{message.text}</span>
-              </div>
-              <button
-                onClick={() => setMessage(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'rgba(255,255,255,0.6)',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  padding: '2px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: '50%',
-                  transition: 'color 0.2s'
-                }}
-              >
-                <X size={14} />
-              </button>
+        {message && !isLoading && (
+          <div style={{ position: 'absolute', top: '68px', left: '50%', transform: 'translateX(-50%)', zIndex: 99998, padding: '10px 18px', borderRadius: '30px', background: 'rgba(15, 23, 42, 0.92)', backdropFilter: 'blur(16px)', color: '#ffffff', border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.4)' : message.type === 'error' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.4)'}`, boxShadow: '0 12px 32px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.88rem', fontWeight: 600 }}>
+            {message.type === 'success' && <CheckCircle2 size={18} color="#10b981" />}
+            {message.type === 'error' && <AlertCircle size={18} color="#ef4444" />}
+            {message.type === 'info' && <Info size={18} color="#3b82f6" />}
+            <span>{message.text}</span>
+            <button onClick={() => setMessage(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}><X size={14} /></button>
+          </div>
+        )}
+
+        <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <MapComponent
+            mode={mode} setMode={setMode} isDeviceSelected={!!selectedDevice || showIOSWizard}
+            startLocation={startLocation} selectedLocation={selectedLocation} currentLocation={currentLocation}
+            onLocationSelect={handleLocationSelect} focusTrigger={focusTrigger} onTeleport={changeLocation}
+            mapRotation={mapRotation} showDevicePanel={showDevicePanel} setShowDevicePanel={setShowDevicePanel}
+            hasDeviceNotification={hasNewDeviceNotification} onScanDevices={loadDevices} isScanning={isLoading}
+            devices={uniqueDevices} onSelectDevice={handleDeviceSelect} onOpenWizard={openWizard}
+            routePath={routeSimulation.path} routeProgress={routeSimulation.progress} routeCurrentIndex={routeSimulation.currentIndex}
+            selectionMode={selectionMode} forceShowGuide={showGeneralGuide} onCloseGuide={() => setShowGeneralGuide(false)}
+            isRouteSimulating={routeSimulation.active} hardwareLocation={hardwareLocation} debugInfo={debugInfo}
+          />
+
+          {isLoading && locationChangeInProgressRef.current && (
+            <div style={{ position: 'fixed', top: '68px', left: '50%', transform: 'translateX(-50%)', zIndex: 99999, background: 'rgba(15, 23, 42, 0.90)', backdropFilter: 'blur(16px)', color: '#ffffff', padding: '10px 22px', borderRadius: '30px', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.9rem', fontWeight: 600 }}>
+              <div className="animate-spin" style={{ width: '16px', height: '16px', border: '2px solid rgba(255, 255, 255, 0.25)', borderTopColor: '#3b82f6', borderRadius: '50%' }} />
+              <span>⚡ Işınlanıyor...</span>
             </div>
           )}
 
-          {/* Main Content - Full Screen Map with Floating Panels */}
-          <div style={{
-            flex: 1,
-            position: 'relative',
-            overflow: 'hidden'
-          }}>
-            <MapComponent
-              mode={mode}
-              setMode={setMode}
-              isDeviceSelected={!!selectedDevice || showIOSWizard}
-              startLocation={startLocation}
-              selectedLocation={selectedLocation}
-              currentLocation={currentLocation}
-              onLocationSelect={handleLocationSelect}
-              focusTrigger={focusTrigger}
-              onTeleport={changeLocation}
-              mapRotation={mapRotation}
-              showDevicePanel={showDevicePanel}
-              setShowDevicePanel={(val: boolean) => {
-                setShowDevicePanel(val);
-                if (val) setHasNewDeviceNotification(false);
-              }}
-              hasDeviceNotification={hasNewDeviceNotification}
-              onScanDevices={loadDevices}
-              isScanning={isLoading}
-              devices={uniqueDevices}
-              onSelectDevice={handleDeviceSelect}
-              onOpenWizard={openWizard}
-              routePath={routeSimulation.path}
-              routeProgress={routeSimulation.progress}
-              routeCurrentIndex={routeSimulation.currentIndex}
-              selectionMode={selectionMode}
-              forceShowGuide={showGeneralGuide}
-              onCloseGuide={() => setShowGeneralGuide(false)}
-              isRouteSimulating={routeSimulation.active}
-            />
+          {showDevicePanel && (
+            <div className="floating-right-panel">
+              <DeviceManager devices={uniqueDevices} selectedDevice={selectedDevice} onSelectDevice={handleDeviceSelect} onDisconnectAll={handleStopAllSimulations} onDisconnectDevice={handleDisconnectDevice} />
+            </div>
+          )}
 
-            {/* Teleporting Loading Indicator Overlay */}
-            {isLoading && locationChangeInProgressRef.current && (
-              <div style={{
-                position: 'fixed',
-                top: '68px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                zIndex: 99999,
-                background: 'rgba(15, 23, 42, 0.90)',
-                backdropFilter: 'blur(16px)',
-                color: '#ffffff',
-                padding: '10px 22px',
-                borderRadius: '30px',
-                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                fontSize: '0.9rem',
-                fontWeight: 600,
-                letterSpacing: '-0.01em',
-                pointerEvents: 'none',
-                animation: 'fadeUp 0.2s ease-out'
-              }}>
-                <div className="animate-spin" style={{
-                  width: '16px',
-                  height: '16px',
-                  border: '2px solid rgba(255, 255, 255, 0.25)',
-                  borderTopColor: '#3b82f6',
-                  borderRadius: '50%'
-                }} />
-                <span>⚡ Işınlanıyor, lütfen bekleyiniz...</span>
-              </div>
-            )}
+          {selectedDevice && (
+            <div className={`floating-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+              <button className="collapse-toggle" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}>
+                {isSidebarCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+              </button>
 
-            {/* Floating Device Manager (Right Side) */}
-            {showDevicePanel && (
-              <div className="floating-right-panel">
-                <DeviceManager
-                  devices={uniqueDevices}
-                  selectedDevice={selectedDevice}
-                  onSelectDevice={(dev) => handleDeviceSelect(dev)}
-                  onDisconnectAll={handleStopAllSimulations}
-                  onDisconnectDevice={handleDisconnectDevice}
+              <div className="floating-panel" style={{ flex: 1, overflow: 'auto' }}>
+                <LocationControls
+                  mode={mode} setMode={setMode} selectedDevice={selectedDevice}
+                  startLocation={startLocation} startAddress={startAddress}
+                  selectedLocation={selectedLocation} selectedAddress={selectedAddress}
+                  currentLocation={currentLocation} onSetStartLocation={setStartLocation} onSetEndLocation={setSelectedLocation}
+                  selectionMode={selectionMode} setSelectionMode={setSelectionMode} onChangeLocation={changeLocation}
+                  mapRotation={mapRotation}
+                  onJoystickMove={async (lat, lng, isFollow = false, isRoute = false, rotation?: number) => {
+                    if (!selectedDevice) return;
+                    if (selectedDevice.os === 'ios' && selectedDevice.developerModeChecked && !selectedDevice.developerModeEnabled) return;
+                    try {
+                      if (isFollow && rotation !== undefined) setMapRotation(rotation);
+                      invoke('set_location', {
+                        os: selectedDevice.os, udid: selectedDevice.id, lat, lng,
+                        speed: speedRef.current / 3.6, bearing: rotation || 0.0, altitude: 100.0
+                      });
+                      setCurrentLocation({ latitude: lat, longitude: lng });
+                      if (!isRoute) {
+                        setSelectedLocation({ latitude: lat, longitude: lng });
+                        if (isFollow) setFocusTrigger(prev => prev + 1);
+                      }
+                    } catch (e) { console.error(e); }
+                  }}
+                  isLoading={isLoading} onStartRoute={startRouteSimulation} onStopRoute={stopRouteSimulation}
+                  onPauseRoute={pauseRouteSimulation} onResumeRoute={resumeRouteSimulation}
+                  routeActive={routeSimulation.active} routePaused={routeSimulation.paused}
+                  speed={speed} onSpeedChange={setSpeed}
+                  onSwapLocations={swapLocations}
                 />
               </div>
-            )}
-
-            {/* Floating Left Panel - Location Controls */}
-            {selectedDevice && (
-              <div className={`floating-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
-                <button
-                  className="collapse-toggle"
-                  onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                  title={isSidebarCollapsed ? "Paneli Göster" : "Paneli Gizle"}
-                >
-                  {isSidebarCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-                </button>
-
-                <div className="floating-panel" style={{ flex: 1, overflow: 'auto' }}>
-                  <LocationControls
-                    mode={mode}
-                    setMode={setMode}
-                    selectedDevice={selectedDevice}
-                    startLocation={startLocation}
-                    startAddress={startAddress}
-                    selectedLocation={selectedLocation}
-                    selectedAddress={selectedAddress}
-                    currentLocation={currentLocation}
-                    onSetStartLocation={(loc) => { setStartLocation(loc); if (!loc) setStartAddress(''); }}
-                    onSetEndLocation={(loc) => { setSelectedLocation(loc); if (!loc) setSelectedAddress(''); }}
-                    selectionMode={selectionMode}
-                    setSelectionMode={setSelectionMode}
-                    onChangeLocation={changeLocation}
-                    mapRotation={mapRotation}
-                    onJoystickMove={async (lat, lng, isFollow = false, isRoute = false, rotation?: number) => {
-                      if (selectedDevice) {
-                        // iOS developer mode check
-                        if (selectedDevice.os === 'ios' && selectedDevice.developerModeChecked && !selectedDevice.developerModeEnabled) {
-                          setMessage({
-                            type: 'error',
-                            text: '❌ iOS Developer Mode kapalı! Konum değiştirme devre dışı.'
-                          });
-                          return;
-                        }
-
-                        try {
-                          if (isFollow && rotation !== undefined) {
-                            setMapRotation(rotation);
-                          }
-
-                          await invoke('set_location', {
-                            os: selectedDevice.os,
-                            udid: selectedDevice.id,
-                            lat: lat,
-                            lng: lng
-                          });
-
-                          setCurrentLocation({ latitude: lat, longitude: lng });
-
-                          if (!isRoute) {
-                            setSelectedLocation({ latitude: lat, longitude: lng });
-                            if (isFollow) {
-                              setFocusTrigger(prev => prev + 1);
-                            }
-                          }
-                        } catch (e) {
-                          console.error("Move failed:", e);
-                          const errorMsg = String(e);
-
-                          if (errorMsg.includes('Developer Mode') || errorMsg.includes('developer mode')) {
-                            setMessage({ type: 'error', text: '❌ Developer Mode kapalı!' });
-                            openWizard(selectedDevice, 'developer');
-                          } else if (errorMsg.includes('trust') || errorMsg.includes('Trust') || errorMsg.includes('lockdown')) {
-                            setMessage({ type: 'error', text: '❌ Bağlantı koptu veya cihaz kilitlendi!' });
-                            openWizard(selectedDevice, 'device');
-                          } else {
-                            setMessage({ type: 'error', text: 'Hareket sırasında hata oluştu!' });
-                          }
-                        }
-                      }
-                    }}
-                    isLoading={isLoading}
-                    onStartRoute={startRouteSimulation}
-                    onStopRoute={stopRouteSimulation}
-                    onPauseRoute={pauseRouteSimulation}
-                    onResumeRoute={resumeRouteSimulation}
-                    routeActive={routeSimulation.active}
-                    routePaused={routeSimulation.paused}
-                    speed={speed}
-                    onSpeedChange={setSpeed}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
+      </div>
     </>
   );
 }

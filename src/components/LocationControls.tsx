@@ -39,6 +39,7 @@ interface LocationControlsProps {
     routePaused?: boolean;
     speed: 'walk' | 'run' | 'drive';
     onSpeedChange: (speed: 'walk' | 'run' | 'drive') => void;
+    onSwapLocations?: () => void;
 }
 
 export default function LocationControls({
@@ -64,7 +65,8 @@ export default function LocationControls({
     routeActive,
     routePaused,
     speed,
-    onSpeedChange
+    onSpeedChange,
+    onSwapLocations
 }: LocationControlsProps) {
     const canChangeLocation = selectedDevice && selectedLocation && !isLoading;
     const [isMoving, setIsMoving] = useState(false);
@@ -259,9 +261,41 @@ export default function LocationControls({
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'center', margin: '-10px 0', zIndex: 2 }}>
-                            <div style={{ background: 'white', borderRadius: '50%', padding: '4px', border: '1px solid var(--border-light)', color: 'var(--text-muted)' }}>
+                            <button
+                                type="button"
+                                onClick={onSwapLocations}
+                                disabled={routeActive}
+                                title={routeActive ? "Rota aktifken yön değiştirilemez" : "Başlangıç ve varış noktasını değiştir"}
+                                style={{
+                                    background: 'white',
+                                    borderRadius: '50%',
+                                    width: '28px',
+                                    height: '28px',
+                                    border: '1px solid var(--border-light)',
+                                    color: routeActive ? 'var(--text-muted)' : 'var(--primary)',
+                                    cursor: routeActive ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
+                                    transition: 'all 0.2s ease',
+                                    padding: 0
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!routeActive) {
+                                        e.currentTarget.style.transform = 'scale(1.1) rotate(180deg)';
+                                        e.currentTarget.style.borderColor = 'var(--primary)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!routeActive) {
+                                        e.currentTarget.style.transform = 'scale(1) rotate(0deg)';
+                                        e.currentTarget.style.borderColor = 'var(--border-light)';
+                                    }
+                                }}
+                            >
                                 <ArrowUpDown size={14} />
-                            </div>
+                            </button>
                         </div>
 
                         {/* Varış Noktası (B) */}

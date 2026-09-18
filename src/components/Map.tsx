@@ -16,7 +16,7 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 // --- Custom Icons ---
-const getUserIcon = (rotation: number = 0) => L.divIcon({
+const getUserIcon = (_rotation: number = 0) => L.divIcon({
     className: 'custom-user-icon',
     html: `<div style="
         position: relative;
@@ -115,6 +115,8 @@ interface MapProps {
     forceShowGuide?: boolean;
     onCloseGuide?: () => void;
     isRouteSimulating?: boolean;
+    hardwareLocation?: { latitude: number; longitude: number } | null;
+    debugInfo?: { rtt: number; lagMeters: number };
 }
 
 // SAFE MapFlyTo - PREVENTS LOOPS
@@ -221,7 +223,7 @@ export default function Map({
     mapRotation = 0,
     onOpenWizard,
     routePath = [],
-    routeProgress = 0,
+    routeProgress: _routeProgress = 0,
     routeCurrentIndex = 0,
     forceShowGuide,
     onCloseGuide,
