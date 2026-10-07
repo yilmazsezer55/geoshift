@@ -298,9 +298,11 @@ function App() {
       isDeviceBusyRef.current = true;
 
       // Look-ahead gecikme telafisi (iMyFone AnyTo mantığı):
-      // Donanım/USB/Ağ iletim gecikmesi (EMA RTT) süresince UI ilerleyecektir.
-      // Cihazın haritada UI ile senkron görünmesi için RTT süresi kadar ilerideki koordinatı gönderiyoruz.
-      const lookAheadMs = Math.min(Math.max(emaRttRef.current, 50), 1200);
+      // Telefondaki dahili GPS/Mock Location filtreleme gecikmesi (Kalman filtresi vb.)
+      // yüksek araç hızlarında (60 km/h) konumu 1.5 - 2 saniye geriden getirir.
+      // Hıza bağlı dinamik baz telafi süresi ile cihazın ekrandaki imleçle birebir senkron olması sağlanır:
+      const baseLatencyMs = currentSpeedKmh >= 50 ? 1800 : (currentSpeedKmh >= 10 ? 800 : 350);
+      const lookAheadMs = Math.max(emaRttRef.current, baseLatencyMs);
       const lookAheadDistKm = lookAheadMs * speedKmMs;
       const targetDeviceDist = Math.min(totalDistCovered + lookAheadDistKm, data.totalDist);
       const devicePos = getCoordinatesAtDistance(targetDeviceDist);
@@ -738,9 +740,15 @@ function App() {
       setShowAndroidWizard(true);
     };
     window.addEventListener('open-android-guide', handleOpenAndroidGuide);
-    const interval = setInterval(() => loadDevices(true), 2000);
+    const interval = setInterval(() => {
+      // Simülasyon devam ederken USB ve ADB veri yolunu tıkamamak için cihaz taramasını atla
+      if (isRouteRunning.current) return;
+      loadDevices(true);
+    }, 3500);
 
     const healthInterval = setInterval(async () => {
+      // Simülasyon devam ederken sağlık kontrolü subprocess'lerini atla
+      if (isRouteRunning.current) return;
       if (selectedDevice) {
         try {
           let isAlive = await invoke<boolean>('check_device_health', {
@@ -758,7 +766,7 @@ function App() {
           }
         } catch (e) { console.error(e); }
       }
-    }, 500);
+    }, 2000);
 
     return () => {
       window.removeEventListener('open-android-guide', handleOpenAndroidGuide);
