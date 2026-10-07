@@ -98,6 +98,33 @@ pub async fn list_devices() -> Result<Vec<Device>, String> {
     Ok(device_list)
 }
 
+fn get_apk_path() -> std::path::PathBuf {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().unwrap_or(manifest_dir);
+    let candidates = [
+        repo_root.join("resources").join("settings_apk-debug.apk"),
+        manifest_dir.join("resources").join("settings_apk-debug.apk"),
+        std::path::PathBuf::from("resources/settings_apk-debug.apk"),
+        std::path::PathBuf::from("../resources/settings_apk-debug.apk"),
+    ];
+    for p in &candidates {
+        if p.exists() {
+            return p.clone();
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let p1 = parent.join("resources").join("settings_apk-debug.apk");
+            if p1.exists() { return p1; }
+            if let Some(p2) = parent.parent() {
+                let p2_candidate = p2.join("resources").join("settings_apk-debug.apk");
+                if p2_candidate.exists() { return p2_candidate; }
+            }
+        }
+    }
+    repo_root.join("resources").join("settings_apk-debug.apk")
+}
+
 pub async fn ensure_helper_app(device_id: &str) -> Result<bool, String> {
     let mut server = ADBServer::new(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5037));
     let mut device = server.get_device_by_name(device_id).map_err(|e| format!("Cihaz bulunamadı: {}", e))?;
@@ -105,22 +132,41 @@ pub async fn ensure_helper_app(device_id: &str) -> Result<bool, String> {
     let _ = device.shell_command(&"pm list packages io.appium.settings", Some(&mut output), None);
     if String::from_utf8_lossy(&output).contains("package:io.appium.settings") { return Ok(true); }
 
-    let apk_path = std::path::PathBuf::from("resources/settings_apk-debug.apk");
+    let mut apk_path = get_apk_path();
     if !apk_path.exists() {
         let python_exe = if Path::new(".venv/Scripts/python.exe").exists() { ".venv/Scripts/python.exe" } else { "python" };
-        let script_path = "scripts/download_helper.py";
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap_or(manifest_dir);
+        let script_path = repo_root.join("scripts").join("download_helper.py");
         let mut py_cmd = Command::new(python_exe);
-        py_cmd.args(&[script_path]);
+        py_cmd.arg(&script_path);
         #[cfg(target_os = "windows")] { use std::os::windows::process::CommandExt; py_cmd.creation_flags(0x08000000); }
         let _ = py_cmd.output();
+        apk_path = get_apk_path();
     }
-    if !apk_path.exists() { return Err("APK not found".to_string()); }
+    if !apk_path.exists() { return Err(format!("APK bulunamadı (Aranan konum: {:?})", apk_path)); }
 
+    // 1. Önce izinleri otomatik vererek yüklemeyi dene (-g)
     let mut adb_cmd = Command::new("adb");
     adb_cmd.args(&["-s", device_id, "install", "-r", "-t", "-g", apk_path.to_str().unwrap()]);
     #[cfg(target_os = "windows")] { use std::os::windows::process::CommandExt; adb_cmd.creation_flags(0x08000000); }
     let out = adb_cmd.output().map_err(|e| e.to_string())?;
-    Ok(out.status.success())
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if out.status.success() || stdout.contains("Success") {
+        return Ok(true);
+    }
+
+    // 2. Bazı Huawei ve eski cihazlarda -g hata verebilir, standart install fallback dene
+    let mut fallback_cmd = Command::new("adb");
+    fallback_cmd.args(&["-s", device_id, "install", "-r", "-t", apk_path.to_str().unwrap()]);
+    #[cfg(target_os = "windows")] { use std::os::windows::process::CommandExt; fallback_cmd.creation_flags(0x08000000); }
+    let fb_out = fallback_cmd.output().map_err(|e| e.to_string())?;
+    let fb_stdout = String::from_utf8_lossy(&fb_out.stdout);
+    if fb_out.status.success() || fb_stdout.contains("Success") {
+        return Ok(true);
+    }
+
+    Err(format!("APK yüklenemedi: {}", if !fb_stdout.is_empty() { fb_stdout.trim() } else { stdout.trim() }))
 }
 
 pub async fn open_developer_settings(device_id: &str) -> Result<(), String> {
@@ -159,18 +205,24 @@ pub async fn set_mock_location(
     let brg_str = format!("{:.2}", bearing);
     let alt_str = format!("{:.1}", altitude);
 
-    // am startservice is safer on emulators and older Androids compared to foreground-service.
-    // We use strings (--es) for extras to avoid ADB float parsing issues on some locales.
+    let mut server = ADBServer::new(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5037));
+    let mut device = server.get_device_by_name(device_id).map_err(|e| format!("ADB error: {}", e))?;
+
+    // 1. am startservice: Modern Android cihazlar için
     let command = format!(
         "am startservice -n io.appium.settings/.LocationService --es latitude {} --es longitude {} --es altitude {} --es speed {} --es bearing {} --es accuracy 8.0",
         lat_str, lng_str, alt_str, spd_str, brg_str
     );
-
-    let mut server = ADBServer::new(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 5037));
-    let mut device = server.get_device_by_name(device_id).map_err(|e| format!("ADB error: {}", e))?;
-
     let mut output = Vec::new();
-    device.shell_command(&command, Some(&mut output), None).map_err(|e| format!("ADB shell failed: {}", e))?;
+    let _ = device.shell_command(&command, Some(&mut output), None);
+
+    // 2. am broadcast: Emülatörler ve background-service kısıtlaması olan Android 8+ cihazlar için kritik fallback!
+    let broadcast_cmd = format!(
+        "am broadcast -a io.appium.settings.set_location --es longitude {} --es latitude {} --es altitude {} --es speed {} --es bearing {}",
+        lng_str, lat_str, alt_str, spd_str, brg_str
+    );
+    let mut b_output = Vec::new();
+    let _ = device.shell_command(&broadcast_cmd, Some(&mut b_output), None);
 
     Ok("OK".to_string())
 }

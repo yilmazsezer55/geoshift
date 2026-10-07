@@ -25,8 +25,20 @@ interface ValidationStep {
 
 export default function AndroidConnectionWizard({ device: initialDevice, onComplete, onCancel }: AndroidConnectionWizardProps) {
     const [device, setDevice] = useState(initialDevice);
+
+    const isHuawei = (d: typeof initialDevice) =>
+        /huawei|honor|hisuite|hdb/i.test(d.name + ' ' + d.model);
+
     const [steps, setSteps] = useState<ValidationStep[]>([
-        { id: 'usb_adb', title: 'Geliştirici Seçenekleri ve USB Hata Ayıklama', icon: <Settings size={18} />, status: 'pending' },
+        {
+            id: 'usb_adb',
+            title: 'Geliştirici Seçenekleri ve USB Hata Ayıklama',
+            icon: <Settings size={18} />,
+            status: 'pending',
+            helpText: isHuawei(initialDevice)
+                ? '⚠️ Huawei cihaz tespit edildi!\n\nLütfen telefonda şu ayarları yapın:\n1. Ayarlar > Güvenlik > "HiSuite\'in HDB kullanmasına izin ver" → KAPATIN\n2. Ayarlar > Geliştirici Seçenekleri > "USB Hata Ayıklama" → AÇIN\n3. Ayarlar > Geliştirici Seçenekleri > "Yalnızca şarj modunda ADB hata ayıklamasına izin ver" → AÇIN\n\nBu ayarlar olmadan Huawei cihazlar görünmez.'
+                : undefined
+        },
         { id: 'trust_pc', title: 'Bilgisayara İzin Verme (ADB Yetkisi)', icon: <Shield size={18} />, status: 'pending' },
         { id: 'helper', title: 'Yardımcı Uygulama Kurulumu', icon: <Zap size={18} />, status: 'pending' },
         { id: 'mock', title: 'Sahte Konum Uygulaması Seçimi', icon: <Smartphone size={18} />, status: 'pending' },
@@ -83,10 +95,12 @@ export default function AndroidConnectionWizard({ device: initialDevice, onCompl
         }
 
         if (!realAdbDevice) {
-            // Cihaz hala ADB tarafından görülmüyor
+            const huawei = isHuawei(initialDevice);
             updateStep('usb_adb', {
                 status: 'action_required',
-                helpText: 'Geliştirici Modu veya USB Hata Ayıklama henüz aktif değil veya bilgisayar tarafından tanınmadı. Lütfen: \n1. USB kablosunu çıkarıp takın. \n2. USB modunu "Dosya Transferi" olarak seçin. \n3. Ayarlar > Geliştirici Seçenekleri > USB Hata Ayıklama\'nın açık olduğundan emin olun.'
+                helpText: huawei
+                    ? '⚠️ Huawei cihaz görünmüyor!\n\nAşağıdaki adımları sırayla uygulayın:\n1. Ayarlar > Güvenlik > "HiSuite\'in HDB kullanmasına izin ver" → KAPATIN\n2. Ayarlar > Geliştirici Seçenekleri > "USB Hata Ayıklama" → AÇIN\n3. Ayarlar > Geliştirici Seçenekleri > "Yalnızca şarj modunda ADB hata ayıklamasına izin ver" → AÇIN\n4. Kabloyu çıkarıp tekrar takın, USB modunu "Dosya Transferi" seçin.'
+                    : 'Geliştirici Modu veya USB Hata Ayıklama henüz aktif değil veya bilgisayar tarafından tanınmadı. Lütfen:\n1. USB kablosunu çıkarıp takın.\n2. USB modunu "Dosya Transferi" olarak seçin.\n3. Ayarlar > Geliştirici Seçenekleri > USB Hata Ayıklama\'nın açık olduğundan emin olun.'
             });
             setIsSearching(false);
             return;
