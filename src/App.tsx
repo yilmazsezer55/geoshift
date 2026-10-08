@@ -739,7 +739,12 @@ function App() {
       setWizardDevice({ id: 'generic-android', name: 'Android Cihaz', model: 'Bilinmiyor', os: 'android', status: 'Missing', connectionMode: 'usb' });
       setShowAndroidWizard(true);
     };
+    const handleOpenGeneralGuide = () => {
+      setShowDevicePanel(false);
+      setShowGeneralGuide(true);
+    };
     window.addEventListener('open-android-guide', handleOpenAndroidGuide);
+    window.addEventListener('open-general-guide', handleOpenGeneralGuide);
     const interval = setInterval(() => {
       // Simülasyon devam ederken USB ve ADB veri yolunu tıkamamak için cihaz taramasını atla
       if (isRouteRunning.current) return;
@@ -770,6 +775,7 @@ function App() {
 
     return () => {
       window.removeEventListener('open-android-guide', handleOpenAndroidGuide);
+      window.removeEventListener('open-general-guide', handleOpenGeneralGuide);
       clearInterval(interval);
       clearInterval(healthInterval);
     };
@@ -830,7 +836,18 @@ function App() {
 
           {showDevicePanel && (
             <div className="floating-right-panel">
-              <DeviceManager devices={uniqueDevices} selectedDevice={selectedDevice} onSelectDevice={handleDeviceSelect} onDisconnectAll={handleStopAllSimulations} onDisconnectDevice={handleDisconnectDevice} />
+              <DeviceManager
+                devices={uniqueDevices}
+                selectedDevice={selectedDevice}
+                onSelectDevice={handleDeviceSelect}
+                onDisconnectAll={handleStopAllSimulations}
+                onDisconnectDevice={handleDisconnectDevice}
+                onClose={() => setShowDevicePanel(false)}
+                onOpenGuide={() => {
+                  setShowDevicePanel(false);
+                  setShowGeneralGuide(true);
+                }}
+              />
             </div>
           )}
 

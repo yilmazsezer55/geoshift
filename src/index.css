@@ -125,7 +125,7 @@ html, body, #root {
 .floating-search { position: absolute; top: 72px; left: 20px; width: 360px; z-index: 3100; }
 .floating-modes { position: absolute; top: 72px; right: 20px; display: flex; gap: 10px; padding: 6px; z-index: 3000; }
 .floating-sidebar { position: absolute; top: 140px; left: 20px; bottom: 20px; width: 360px; z-index: 3000; display: flex; flex-direction: column; transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1); }
-.floating-sidebar.collapsed { transform: translateX(-400px); }
+.floating-sidebar.collapsed { transform: translateX(calc(-100% - 20px)); }
 .floating-utils { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 3000; }
 
 .floating-right-panel {
@@ -183,12 +183,22 @@ html, body, #root {
 
 /* Sidebar Elements */
 .collapse-toggle {
-  position: absolute; top: 50%; right: -32px;
-  transform: translateY(-50%); width: 32px; height: 64px;
-  background: white; border: 1px solid var(--border);
-  border-left: none; border-radius: 0 12px 12px 0;
-  display: flex; align-items: center; justifyContent: center;
-  cursor: pointer; color: var(--primary); box-shadow: 4px 0 10px rgba(0,0,0,0.05);
+  position: absolute; top: 50%; right: -36px;
+  transform: translateY(-50%); width: 36px; height: 68px;
+  background: white; border: 1.5px solid var(--border);
+  border-left: none; border-radius: 0 14px 14px 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--primary); box-shadow: 4px 0 14px rgba(0,0,0,0.12);
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.collapse-toggle:hover {
+  background: #f8fafc;
+  color: var(--primary-hover, #4338ca);
+  box-shadow: 6px 0 18px rgba(0,0,0,0.18);
+  width: 40px;
+  right: -40px;
 }
 
 /* Input Fields */

@@ -194,8 +194,34 @@ function TeleportOverlay({
             transform: 'translate(-50%, calc(-100% - 25px))',
             zIndex: 1000, pointerEvents: 'auto'
         }}>
-            <div className="floating-panel" style={{ padding: '12px', minWidth: '160px', textAlign: 'center', border: '1.5px solid var(--primary-light)', background: 'white' }}>
-                <button onClick={onClose} style={{ position: 'absolute', top: '-8px', right: '-8px', background: '#ef4444', color: 'white', border: '2px solid white', borderRadius: '50%', width: '22px', height: '22px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={12} /></button>
+            <div className="floating-panel" style={{ padding: '12px', minWidth: '160px', textAlign: 'center', border: '1.5px solid var(--primary-light)', background: 'white', position: 'relative' }}>
+                <button
+                    onClick={onClose}
+                    title="Kapat"
+                    aria-label="Kapat"
+                    style={{
+                        position: 'absolute',
+                        top: '-10px',
+                        right: '-10px',
+                        background: '#ef4444',
+                        color: 'white',
+                        border: '2px solid white',
+                        borderRadius: '50%',
+                        width: '26px',
+                        height: '26px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                        transition: 'transform 0.15s ease',
+                        zIndex: 10
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.15)'}
+                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                    <X size={15} strokeWidth={3} />
+                </button>
                 <div style={{ fontWeight: 800, fontSize: '0.85rem', marginBottom: '8px', color: 'var(--text-primary)' }}>📍 Hedef Nokta</div>
                 <button className="btn btn-primary" onClick={() => onTeleport(location)} style={{ width: '100%', fontSize: '0.8rem', padding: '8px' }}>Buraya Işınlan</button>
             </div>
@@ -508,6 +534,17 @@ export default function Map({
                                             <li>USB kablosunu çıkarıp tekrar takın.</li>
                                             <li>Telefonda çıkan "İzin Ver" uyarısını onaylayın.</li>
                                         </ol>
+
+                                        <div style={{ marginTop: '14px', padding: '12px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', fontSize: '0.82rem', color: '#92400e' }}>
+                                            <p style={{ fontWeight: 800, margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span>📱</span> Huawei / Honor Cihazlar İçin Gerekli Ayarlar:
+                                            </p>
+                                            <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.6 }}>
+                                                <li>Ayarlar &gt; Geliştirici Seçenekleri &gt; <b>"USB Hata Ayıklama"</b> &rarr; <b>Açık</b></li>
+                                                <li>Ayarlar &gt; Geliştirici Seçenekleri &gt; <b>"Yalnızca şarj modunda ADB hata ayıklamasına izin ver"</b> &rarr; <b>Açık</b></li>
+                                                <li>Ayarlar &gt; Güvenlik &gt; <b>"HiSuite'in HDB kullanmasına izin ver"</b> &rarr; <b>Kapalı</b></li>
+                                            </ul>
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="fade-in">

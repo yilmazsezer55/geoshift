@@ -1,4 +1,4 @@
-import { Smartphone, Plus, CheckCircle, AlertCircle, Apple, X } from 'lucide-react';
+import { Smartphone, CheckCircle, AlertCircle, Apple, X } from 'lucide-react';
 
 interface Device {
     id: string;
@@ -17,9 +17,19 @@ interface DeviceManagerProps {
     onSelectDevice: (device: Device) => void;
     onDisconnectAll: () => void;
     onDisconnectDevice: (device: Device) => void;
+    onClose?: () => void;
+    onOpenGuide?: () => void;
 }
 
-export default function DeviceManager({ devices, selectedDevice, onSelectDevice, onDisconnectAll, onDisconnectDevice }: DeviceManagerProps) {
+export default function DeviceManager({
+    devices,
+    selectedDevice,
+    onSelectDevice,
+    onDisconnectAll,
+    onDisconnectDevice,
+    onClose,
+    onOpenGuide
+}: DeviceManagerProps) {
     return (
         <div className="floating-panel" style={{
             height: '100%',
@@ -46,8 +56,34 @@ export default function DeviceManager({ devices, selectedDevice, onSelectDevice,
                         {devices.length} aktif bağlantı
                     </p>
                 </div>
-                <button className="btn-icon" style={{ width: '32px', height: '32px', borderRadius: '8px', border: '1px solid var(--primary-light)', color: 'var(--primary)' }}>
-                    <Plus size={16} />
+                <button
+                    onClick={onClose}
+                    className="btn-icon"
+                    title="Kapat"
+                    aria-label="Kapat"
+                    style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border)',
+                        color: 'var(--text-secondary)',
+                        background: 'white',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                        e.currentTarget.style.color = '#ef4444';
+                        e.currentTarget.style.borderColor = '#ef4444';
+                    }}
+                    onMouseLeave={(e) => {
+                        e.currentTarget.style.color = 'var(--text-secondary)';
+                        e.currentTarget.style.borderColor = 'var(--border)';
+                    }}
+                >
+                    <X size={16} />
                 </button>
             </div>
 
@@ -57,8 +93,12 @@ export default function DeviceManager({ devices, selectedDevice, onSelectDevice,
                     ℹ️ Konum kontrolü sadece **seçili** cihaz üzerinde çalışır. Diğer cihazlar mevcut konumlarında kalır.
                 </p>
                 <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('open-general-guide'))}
-                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary)', fontSize: '0.65rem', fontWeight: 800, cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => {
+                        onClose?.();
+                        onOpenGuide?.();
+                        window.dispatchEvent(new CustomEvent('open-general-guide'));
+                    }}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary)', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', textDecoration: 'underline' }}
                 >
                     Cihazlarım görünmüyor mu?
                 </button>
