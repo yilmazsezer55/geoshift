@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { Search, Layers, Target, Smartphone, MapPin, Route, Gamepad2, Plus, Minus, Loader2, X, Apple, ChevronLeft } from 'lucide-react';
+import { Search, Layers, Target, Smartphone, MapPin, Route, Gamepad2, Plus, Minus, Loader2, X, Apple, ChevronLeft, Globe } from 'lucide-react';
 
 // Fix Leaflet default marker icon issue
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -85,8 +85,8 @@ interface Device {
     name: string;
     model: string;
     status: string;
-    os: 'android' | 'ios';
-    connectionMode: 'usb' | 'wifi';
+    os: 'android' | 'ios' | 'browser';
+    connectionMode: 'usb' | 'wifi' | 'network' | 'local';
 }
 
 interface MapProps {
@@ -475,7 +475,7 @@ export default function Map({
                                 ) : (
                                     devices.map(d => (
                                         <button key={d.id} onClick={() => onSelectDevice(d)} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', padding: '16px', border: (d.status === 'Unauthorized' || d.status === 'Missing' || d.id === 'generic-android') ? '1.5px solid #fde68a' : '1px solid var(--border)', background: (d.status === 'Unauthorized' || d.status === 'Missing' || d.id === 'generic-android') ? '#fffbeb' : 'white' }}>
-                                            {d.os === 'ios' ? <Apple size={20} style={{ color: 'var(--primary)' }} /> : <Smartphone size={20} style={{ color: (d.status !== 'Device' && d.status !== 'Connected') ? '#f59e0b' : 'var(--primary)' }} />}
+                                            {d.os === 'ios' ? <Apple size={20} style={{ color: 'var(--primary)' }} /> : d.os === 'browser' ? <Globe size={20} style={{ color: 'var(--primary)' }} /> : <Smartphone size={20} style={{ color: (d.status !== 'Device' && d.status !== 'Connected') ? '#f59e0b' : 'var(--primary)' }} />}
                                             <div style={{ textAlign: 'left', flex: 1 }}>
                                                 <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                     {d.name}

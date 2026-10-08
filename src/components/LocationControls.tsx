@@ -6,7 +6,7 @@ interface Device {
     name: string;
     model: string;
     status: string;
-    os: 'android' | 'ios';
+    os: 'android' | 'ios' | 'browser';
 }
 
 interface Location {

@@ -1,8 +1,10 @@
 mod adb;
 mod ios;
+mod browser;
 
 use adb::Device;
 use ios::IosDevice;
+use browser::BrowserDevice;
 use std::collections::{HashMap, HashSet};
 use std::process::Child;
 use std::sync::Mutex;
@@ -110,7 +112,16 @@ async fn get_android_devices(state: tauri::State<'_, LocationState>) -> Result<V
 async fn get_ios_devices() -> Result<Vec<IosDevice>, String> { ios::list_ios_devices().await }
 
 #[tauri::command]
+async fn get_browser_devices() -> Result<Vec<BrowserDevice>, String> { Ok(browser::list_browsers().await) }
+
+#[tauri::command]
+async fn launch_browser(browser_id: String) -> Result<String, String> { browser::launch_browser(&browser_id).await }
+
+#[tauri::command]
 async fn check_device_health(os: String, udid: String, require_usb: bool) -> bool {
+    if os == "browser" {
+        return browser::is_cdp_available().await;
+    }
     if os == "ios" {
         if require_usb { return ios::is_ios_usb_connected_hardware(&udid); }
         ios::is_ios_device_connected(&udid).await
@@ -149,7 +160,9 @@ async fn set_location(
                     pending.remove(&udid_worker)
                 };
                 if let Some(p) = payload {
-                    if os_worker == "ios" {
+                    if os_worker == "browser" {
+                        let _ = browser::set_browser_location(p.lat, p.lng, 10.0).await;
+                    } else if os_worker == "ios" {
                         let _ = ios::set_ios_location(&udid_worker, p.lat, p.lng, &state_handle).await;
                     } else {
                         let _ = adb::set_mock_location(&udid_worker, p.lat, p.lng, p.speed, p.bearing, p.altitude).await;
@@ -172,7 +185,13 @@ async fn set_location(
 
 #[tauri::command]
 async fn clear_location(os: String, udid: String, state: tauri::State<'_, LocationState>) -> Result<String, String> {
-    if os == "ios" {
+    if os == "browser" {
+        {
+            let mut active = state.active_udid.lock().unwrap();
+            *active = None;
+        }
+        browser::clear_browser_location().await
+    } else if os == "ios" {
         {
             let mut active = state.active_udid.lock().unwrap();
             *active = None;
@@ -298,10 +317,22 @@ pub fn run() {
                     let state = handle.state::<LocationState>();
                     let active_info = { let lock = state.active_udid.lock().unwrap(); lock.clone() };
                     if let Some((os, udid)) = active_info {
-                        let is_connected = if os == "ios" { ios::is_ios_device_connected(&udid).await } else { adb::is_android_device_connected(&udid).await };
+                        let is_connected = if os == "browser" {
+                            browser::is_cdp_available().await
+                        } else if os == "ios" {
+                            ios::is_ios_device_connected(&udid).await
+                        } else {
+                            adb::is_android_device_connected(&udid).await
+                        };
                         if !is_connected {
                             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                            let still_lost = if os == "ios" { !ios::is_ios_device_connected(&udid).await } else { !adb::is_android_device_connected(&udid).await };
+                            let still_lost = if os == "browser" {
+                                !browser::is_cdp_available().await
+                            } else if os == "ios" {
+                                !ios::is_ios_device_connected(&udid).await
+                            } else {
+                                !adb::is_android_device_connected(&udid).await
+                            };
                             if still_lost {
                                 let _ = handle.emit("device-lost", udid.clone());
                                 { let mut lock = state.active_udid.lock().unwrap(); *lock = None; }
@@ -315,7 +346,8 @@ pub fn run() {
         })
         .on_window_event(|window, event| { if let tauri::WindowEvent::CloseRequested { .. } = event { let state = window.state::<LocationState>(); state.cleanup(); } })
         .invoke_handler(tauri::generate_handler![
-            get_android_devices, get_ios_devices, set_location, clear_location,
+            get_android_devices, get_ios_devices, get_browser_devices, launch_browser,
+            set_location, clear_location,
             check_android_developer_mode, check_ios_developer_mode, enable_ios_developer_mode,
             silence_android_notifications, repair_apple_services, check_itunes_components,
             open_itunes_download, download_and_install_itunes, check_device_health,

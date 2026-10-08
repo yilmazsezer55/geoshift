@@ -29,9 +29,9 @@ interface Device {
   name: string;
   model: string;
   status: string;
-  os: 'android' | 'ios';
-  connectionMode: 'usb' | 'wifi';
-  availableModes?: ('usb' | 'wifi')[];
+  os: 'android' | 'ios' | 'browser';
+  connectionMode: 'usb' | 'wifi' | 'network' | 'local';
+  availableModes?: ('usb' | 'wifi' | 'network' | 'local')[];
   isPaired?: boolean;
   usbId?: string; // Original USB ID for pairing tracking (Android: serial, iOS: UDID)
   developerModeEnabled?: boolean; // iOS only
@@ -581,20 +581,22 @@ function App() {
   const loadDevices = async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const [androidResult, iosResult] = await Promise.allSettled([
+      const [androidResult, iosResult, browserResult] = await Promise.allSettled([
         invoke<any[]>('get_android_devices'),
-        invoke<any[]>('get_ios_devices')
+        invoke<any[]>('get_ios_devices'),
+        invoke<any[]>('get_browser_devices')
       ]);
 
       const rawAndroid = androidResult.status === 'fulfilled' ? androidResult.value : [];
       const rawIos = iosResult.status === 'fulfilled' ? iosResult.value : [];
+      const rawBrowser = browserResult.status === 'fulfilled' ? browserResult.value : [];
       const deviceMap = new Map<string, Device>();
 
-      [...rawAndroid, ...rawIos].forEach((d: any) => {
+      [...rawAndroid, ...rawIos, ...rawBrowser].forEach((d: any) => {
         const id = d.udid || d.id;
         const os = d.os;
-        const name = d.name || d.model || (os === 'android' ? 'Android Cihazı' : 'iPhone');
-        const mode = (d.connection_mode || d.connectionMode || 'usb') as 'usb' | 'wifi';
+        const name = d.name || d.model || (os === 'android' ? 'Android Cihazı' : os === 'browser' ? 'Web Tarayıcı' : 'iPhone');
+        const mode = (d.connection_mode || d.connectionMode || (os === 'browser' ? 'local' : 'usb')) as any;
         const mergeKey = `${os}:${id}`;
         const existing = deviceMap.get(mergeKey);
         const availableModes = existing ? [...(existing.availableModes || []), mode] : [mode];
@@ -602,7 +604,7 @@ function App() {
         deviceMap.set(mergeKey, {
           id,
           name,
-          model: d.model || (os === 'android' ? 'Android' : 'Apple Cihazı'),
+          model: d.model || (os === 'android' ? 'Android' : os === 'browser' ? 'Tarayıcı' : 'Apple Cihazı'),
           status: d.status || (os === 'ios' ? 'Connected' : 'Device'),
           os,
           connectionMode: existing?.connectionMode === 'usb' ? 'usb' : mode,
@@ -677,6 +679,18 @@ function App() {
     setShowDevicePanel(false);
     if (device.os === 'ios') { setWizardDevice(device); setShowIOSWizard(true); }
     else if (device.os === 'android') { setWizardDevice(device); setShowAndroidWizard(true); }
+    else if (device.os === 'browser') {
+      setSelectedDevice(device);
+      setMessage({ type: 'info', text: `🌐 ${device.name} GeoShift modunda bağlanılıyor...` });
+      invoke<string>('launch_browser', { browserId: device.id })
+        .then((_res) => {
+          setMessage({ type: 'success', text: `✅ ${device.name} bağlandı! Haritadaki konum canlı olarak tarayıcıya yansıtılacak.` });
+          loadDevices(true);
+        })
+        .catch((e) => {
+          setMessage({ type: 'error', text: `Tarayıcı bağlanamadı: ${String(e)}` });
+        });
+    }
     else { setSelectedDevice(device); }
   };
 

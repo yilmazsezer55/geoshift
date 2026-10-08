@@ -1,13 +1,13 @@
-import { Smartphone, CheckCircle, AlertCircle, Apple, X } from 'lucide-react';
+import { Smartphone, CheckCircle, AlertCircle, Apple, X, Globe } from 'lucide-react';
 
 interface Device {
     id: string;
     name: string;
     model: string;
     status: string;
-    os: 'android' | 'ios';
-    connectionMode: 'usb' | 'wifi';
-    availableModes?: ('usb' | 'wifi')[];
+    os: 'android' | 'ios' | 'browser';
+    connectionMode: 'usb' | 'wifi' | 'network' | 'local';
+    availableModes?: ('usb' | 'wifi' | 'network' | 'local')[];
     isPaired?: boolean;
 }
 
@@ -154,7 +154,7 @@ export default function DeviceManager({
                                     color: selectedDevice?.id === device.id ? 'white' : 'var(--text-secondary)',
                                     flexShrink: 0
                                 }}>
-                                    {device.os === 'ios' ? <Apple size={16} /> : <Smartphone size={16} />}
+                                    {device.os === 'ios' ? <Apple size={16} /> : device.os === 'browser' ? <Globe size={16} /> : <Smartphone size={16} />}
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{
