@@ -118,9 +118,19 @@ async fn get_browser_devices() -> Result<Vec<BrowserDevice>, String> { Ok(browse
 async fn launch_browser(browser_id: String) -> Result<String, String> { browser::launch_browser(&browser_id).await }
 
 #[tauri::command]
+async fn open_extension_folder() -> Result<String, String> {
+    let ext_dir = browser::ensure_extension_files();
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer").arg(&ext_dir).spawn();
+    }
+    Ok(ext_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 async fn check_device_health(os: String, udid: String, require_usb: bool) -> bool {
     if os == "browser" {
-        return browser::is_cdp_available().await;
+        return browser::is_browser_healthy(&udid).await;
     }
     if os == "ios" {
         if require_usb { return ios::is_ios_usb_connected_hardware(&udid); }
@@ -128,6 +138,30 @@ async fn check_device_health(os: String, udid: String, require_usb: bool) -> boo
     } else {
         adb::is_android_device_connected(&udid).await
     }
+}
+
+#[tauri::command]
+async fn set_active_device(os: String, udid: String, name: String, state: tauri::State<'_, LocationState>) -> Result<(), String> {
+    {
+        let mut active = state.active_udid.lock().unwrap();
+        *active = Some((os.clone(), udid.clone()));
+    }
+    if os == "browser" {
+        browser::notify_extension_device_status(true, "browser", &name);
+    } else {
+        browser::notify_extension_device_status(false, &os, &name);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_active_device(state: tauri::State<'_, LocationState>) -> Result<(), String> {
+    {
+        let mut active = state.active_udid.lock().unwrap();
+        *active = None;
+    }
+    browser::notify_extension_device_status(false, "none", "");
+    Ok(())
 }
 
 #[tauri::command]
@@ -190,6 +224,7 @@ async fn clear_location(os: String, udid: String, state: tauri::State<'_, Locati
             let mut active = state.active_udid.lock().unwrap();
             *active = None;
         }
+        browser::notify_extension_device_status(false, "none", "");
         browser::clear_browser_location().await
     } else if os == "ios" {
         {
@@ -204,6 +239,7 @@ async fn clear_location(os: String, udid: String, state: tauri::State<'_, Locati
 
 #[tauri::command]
 async fn stop_all_simulations(state: tauri::State<'_, LocationState>) -> Result<String, String> {
+    browser::notify_extension_device_status(false, "none", "");
     state.cleanup();
     Ok("Stopped".to_string())
 }
@@ -257,6 +293,27 @@ fn manage_bypass_task() -> bool {
     let env_file = temp_dir.join("geoshift_env.json");
     if !is_admin() {
         if is_dev_mode() { return false; }
+        // Mevcut görevin bu exe_path ile eşleşip eşleşmediğini doğrula
+        let query = Command::new("schtasks")
+            .args(&["/query", "/tn", task_name, "/v", "/fo", "LIST"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        let mut task_matches = false;
+        if let Ok(output) = query {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                let current_exe_str = exe_path.to_string_lossy().to_lowercase();
+                if stdout.contains(&current_exe_str) {
+                    task_matches = true;
+                }
+            }
+        }
+        if !task_matches {
+            // Görev yok veya başka bir konumu/eski debug binary'sini gösteriyor;
+            // Yanlış exe açmamak için çalıştırma, runas adımına devret.
+            return false;
+        }
+
         let mut env_map = HashMap::new();
         for (key, value) in std::env::vars() { if key.starts_with("TAURI") || key == "PATH" { env_map.insert(key, value); } }
         if let Ok(cwd) = std::env::current_dir() { env_map.insert("GEOSHIFT_PWD".to_string(), cwd.to_string_lossy().to_string()); }
@@ -265,11 +322,12 @@ fn manage_bypass_task() -> bool {
         if let Ok(s) = status {
             if s.success() {
                 std::thread::sleep(std::time::Duration::from_secs(2));
+                let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
                 loop {
-                    let check = Command::new("tasklist").args(&["/FI", "IMAGENAME eq geoshift.exe", "/NH"]).creation_flags(CREATE_NO_WINDOW).output();
+                    let check = Command::new("tasklist").args(&["/FI", &format!("IMAGENAME eq {}", exe_name), "/NH"]).creation_flags(CREATE_NO_WINDOW).output();
                     if let Ok(output) = check {
                         let stdout = String::from_utf8_lossy(&output.stdout);
-                        if stdout.matches("geoshift.exe").count() <= 1 { break; }
+                        if stdout.to_lowercase().matches(&exe_name.to_lowercase()).count() <= 1 { break; }
                     }
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
@@ -318,7 +376,7 @@ pub fn run() {
                     let active_info = { let lock = state.active_udid.lock().unwrap(); lock.clone() };
                     if let Some((os, udid)) = active_info {
                         let is_connected = if os == "browser" {
-                            browser::is_cdp_available().await
+                            browser::is_browser_healthy(&udid).await
                         } else if os == "ios" {
                             ios::is_ios_device_connected(&udid).await
                         } else {
@@ -327,7 +385,7 @@ pub fn run() {
                         if !is_connected {
                             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                             let still_lost = if os == "browser" {
-                                !browser::is_cdp_available().await
+                                !browser::is_browser_healthy(&udid).await
                             } else if os == "ios" {
                                 !ios::is_ios_device_connected(&udid).await
                             } else {
@@ -336,18 +394,20 @@ pub fn run() {
                             if still_lost {
                                 let _ = handle.emit("device-lost", udid.clone());
                                 { let mut lock = state.active_udid.lock().unwrap(); *lock = None; }
+                                browser::notify_extension_device_status(false, "none", "");
                                 state.cleanup();
                             }
                         }
                     }
                 }
             });
+            browser::ensure_extension_server();
             Ok(())
         })
         .on_window_event(|window, event| { if let tauri::WindowEvent::CloseRequested { .. } = event { let state = window.state::<LocationState>(); state.cleanup(); } })
         .invoke_handler(tauri::generate_handler![
-            get_android_devices, get_ios_devices, get_browser_devices, launch_browser,
-            set_location, clear_location,
+            get_android_devices, get_ios_devices, get_browser_devices, launch_browser, open_extension_folder,
+            set_location, clear_location, set_active_device, clear_active_device,
             check_android_developer_mode, check_ios_developer_mode, enable_ios_developer_mode,
             silence_android_notifications, repair_apple_services, check_itunes_components,
             open_itunes_download, download_and_install_itunes, check_device_health,

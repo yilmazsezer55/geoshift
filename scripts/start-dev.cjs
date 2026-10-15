@@ -10,7 +10,11 @@ function killStalePortListeners() {
     return;
   }
 
-  const netstat = spawnSync("netstat", ["-ano"], { encoding: "utf8" });
+  const netstat = spawnSync("netstat", ["-ano"], {
+    encoding: "utf8",
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
   if (netstat.error || typeof netstat.stdout !== "string") {
     return;
   }
@@ -29,7 +33,10 @@ function killStalePortListeners() {
     if (parseInt(pid, 10) === process.pid) {
       continue;
     }
-    spawnSync("taskkill", ["/F", "/PID", pid], { stdio: "inherit" });
+    spawnSync("taskkill", ["/F", "/PID", pid], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
   }
 }
 

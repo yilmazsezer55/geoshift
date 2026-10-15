@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .badge-online {
+      background: #dcfce7;
+      color: #15803d;
+    }
+    .badge-offline {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .badge-passive {
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #e2e8f0;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .dot-online { background: #22c55e; }
+    .dot-offline { background: #ef4444; }
+    .dot-passive { background: #94a3b8; }
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .label {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .coords {
+      font-size: 13px;
+      font-weight: 600;
+      color: #0f172a;
+      font-family: monospace;
+    }
+    .footer {
+      margin-top: 12px;
+      font-size: 11px;
+      color: #64748b;
+      line-height: 1.4;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon32.png" width="22" height="22" alt="GeoShift" style="border-radius: 6px; display: block;" />
+    <div>
+      <div style="font-weight: 800; font-size: 14px; color: #4338ca;">GeoShift Sync</div>
+      <div style="font-size: 11px; color: #64748b;">Masaüstü Entegrasyonu</div>
+    </div>
+  </div>
+
+  <div style="margin-bottom: 12px;">
+    <div id="statusBadge" class="badge badge-offline">
+      <span id="statusDot" class="dot dot-offline"></span>
+      <span id="statusText">Bağlantı Aranıyor...</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Canlı Senkronize Konum</div>
+    <div id="coordsText" class="coords">Bekleniyor...</div>
+  </div>
+
+  <div id="noteText" class="footer">
+    GeoShift haritasındaki her hareket mevcut tüm sekmelerinize canlı yansır.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

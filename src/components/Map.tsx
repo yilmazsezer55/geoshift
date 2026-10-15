@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
-import { Search, Layers, Target, Smartphone, MapPin, Route, Gamepad2, Plus, Minus, Loader2, X, Apple, ChevronLeft, Globe } from 'lucide-react';
+import { Search, Layers, Target, Smartphone, MapPin, Route, Gamepad2, Plus, Minus, Loader2, X, Apple, ChevronLeft, Globe, FolderOpen } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 
 // Fix Leaflet default marker icon issue
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -247,7 +248,7 @@ export default function Map({
     hasDeviceNotification,
     isScanning,
     mapRotation = 0,
-    onOpenWizard,
+    onOpenWizard: _onOpenWizard,
     routePath = [],
     routeProgress: _routeProgress = 0,
     routeCurrentIndex = 0,
@@ -265,7 +266,7 @@ export default function Map({
         }
     }, [forceShowGuide]);
 
-    const [guideOS, setGuideOS] = useState<'android' | 'ios'>('android');
+    const [guideOS, setGuideOS] = useState<'android' | 'ios' | 'browser'>('android');
     const [searchQuery, setSearchQuery] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -484,15 +485,6 @@ export default function Map({
                                                 </div>
                                                 <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>{d.model} {d.status !== 'Device' && d.status !== 'Connected' && d.status !== 'Missing' ? `(${d.status})` : ''}</div>
                                             </div>
-                                            {d.os === 'ios' && (
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); onOpenWizard(d); }}
-                                                    style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: '4px' }}
-                                                    title="Bağlantı Sihirbazı"
-                                                >
-                                                    <Loader2 size={16} />
-                                                </button>
-                                            )}
                                         </button>
                                     ))
                                 )}
@@ -519,9 +511,10 @@ export default function Map({
 
                             <h3 style={{ fontSize: '1.4rem', fontWeight: 800, textAlign: 'center', marginBottom: '20px' }}>Bağlantı Rehberi</h3>
 
-                            <div style={{ display: 'flex', background: '#f1f5f9', padding: '4px', borderRadius: '12px', marginBottom: '20px' }}>
+                            <div style={{ display: 'flex', background: '#f1f5f9', padding: '4px', borderRadius: '12px', marginBottom: '20px', gap: '4px' }}>
                                 <button onClick={() => setGuideOS('android')} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: guideOS === 'android' ? 'white' : 'transparent', fontWeight: 600, color: guideOS === 'android' ? 'var(--primary)' : 'var(--text-secondary)', cursor: 'pointer' }}>Android</button>
                                 <button onClick={() => setGuideOS('ios')} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: guideOS === 'ios' ? 'white' : 'transparent', fontWeight: 600, color: guideOS === 'ios' ? 'var(--primary)' : 'var(--text-secondary)', cursor: 'pointer' }}>iOS</button>
+                                <button onClick={() => setGuideOS('browser')} style={{ flex: 1.2, padding: '10px', borderRadius: '10px', border: 'none', background: guideOS === 'browser' ? 'white' : 'transparent', fontWeight: 600, color: guideOS === 'browser' ? 'var(--primary)' : 'var(--text-secondary)', cursor: 'pointer' }}>Tarayıcı & Eklenti</button>
                             </div>
 
                             <div style={{ minHeight: '260px' }}>
@@ -537,7 +530,7 @@ export default function Map({
 
                                         <div style={{ marginTop: '14px', padding: '12px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '10px', fontSize: '0.82rem', color: '#92400e' }}>
                                             <p style={{ fontWeight: 800, margin: '0 0 6px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                <span>📱</span> Huawei / Honor Cihazlar İçin Gerekli Ayarlar:
+                                                 📱  Huawei / Honor Cihazlar İçin Gerekli Ayarlar:
                                             </p>
                                             <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.6 }}>
                                                 <li>Ayarlar &gt; Geliştirici Seçenekleri &gt; <b>"USB Hata Ayıklama"</b> &rarr; <b>Açık</b></li>
@@ -546,7 +539,7 @@ export default function Map({
                                             </ul>
                                         </div>
                                     </div>
-                                ) : (
+                                ) : guideOS === 'ios' ? (
                                     <div className="fade-in">
                                         <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px' }}>iOS cihazınızın algılanması için:</p>
                                         <ul style={{ paddingLeft: '20px', lineHeight: 1.8, fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
@@ -554,6 +547,45 @@ export default function Map({
                                             <li><b>iTunes</b>'un bilgisayarınızda yüklü ve güncel olduğundan emin olun.</li>
                                             <li>Ayarlar &gt; Gizlilik ve Güvenlik &gt; <b>Geliştirici Modu</b>'nu açın ve cihazı yeniden başlatın.</li>
                                         </ul>
+                                    </div>
+                                ) : (
+                                    <div className="fade-in">
+                                        <p style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>🌐 Tarayıcıda Canlı Konum Kontrolü:</p>
+                                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '12px' }}>
+                                            <p style={{ margin: '0 0 6px 0' }}>• <b>1. Yöntem (Doğrudan Seçim):</b> Tarayıcınız açıkken listeden seçebilirsiniz (ayrı bir pencere olarak bağlanır).</p>
+                                            <p style={{ margin: 0 }}>• <b>2. Yöntem (GeoShift Eklentisi - Önerilen):</b> Yeni pencere açmadan, mevcut açık olan tüm sekmelerinizde anında ve kesintisiz çalışır.</p>
+                                        </div>
+
+                                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px', fontSize: '0.8rem', color: '#334155' }}>
+                                            <div style={{ fontWeight: 800, marginBottom: '6px', color: '#1e293b' }}>📦 Eklentiyi Kurmak (Sadece 20 Saniye):</div>
+                                            <ol style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.6 }}>
+                                                <li>Aşağıdaki <b>"Eklenti Klasörünü Aç"</b> butonuna basın.</li>
+                                                <li>Tarayıcınızda <code>chrome://extensions</code> (veya Opera'da <code>opera://extensions</code>) adresini açın.</li>
+                                                <li>Sağ üstteki <b>Geliştirici Modu</b>'nu açın.</li>
+                                                <li><b>Paketlenmemiş Öğe Yükle</b> butonuna basıp az önce açılan <b>bu klasörü doğrudan seçin</b> (içinden dosya aramanıza gerek yoktur, tek bir ortak klasördür).</li>
+                                            </ol>
+                                        </div>
+
+                                        <div style={{ marginTop: '10px', padding: '8px 12px', background: '#eef2ff', borderRadius: '8px', fontSize: '0.75rem', color: '#3730a3' }}>
+                                            ℹ️ <b>Tek Bir Klasör Yeterlidir:</b> Chrome, Edge, Brave ve Opera'nın tümünde aynı eklenti klasörü geçerlidir.
+                                        </div>
+
+                                        <button
+                                            onClick={async () => {
+                                                try {
+                                                    const path = await invoke<string>('open_extension_folder');
+                                                    if (path && navigator.clipboard) {
+                                                        navigator.clipboard.writeText(path);
+                                                    }
+                                                } catch (e) {
+                                                    console.error(e);
+                                                }
+                                            }}
+                                            className="btn btn-secondary"
+                                            style={{ marginTop: '12px', width: '100%', gap: '8px', fontWeight: 700, borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                                        >
+                                            <FolderOpen size={16} /> Eklenti Klasörünü Aç (Adres Otomatik Kopyalanır)
+                                        </button>
                                     </div>
                                 )}
                             </div>

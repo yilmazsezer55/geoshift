@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-wscript "%~dp0run-tauri-dev-hidden.vbs"
+start "" "%SystemRoot%\System32\wscript.exe" "%~dp0run-tauri-dev-hidden.vbs"
 exit /b 0

@@ -11,6 +11,7 @@ import IOSConnectionWizard from './components/IOSConnectionWizard';
 import AndroidConnectionWizard from './components/AndroidConnectionWizard';
 import LegalDisclaimer from './components/LegalDisclaimer';
 import logo from './assets/logo.png';
+import SettingsModal from './components/SettingsModal';
 import {
   ChevronLeft,
   ChevronRight,
@@ -57,7 +58,7 @@ function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
 }
 
 // Custom Titlebar Component (Checklist Optimized)
-const CustomTitlebar = ({ setMessage }: { setMessage: (msg: any) => void }) => {
+const CustomTitlebar = ({ setMessage, onOpenSettings }: { setMessage: (msg: any) => void; onOpenSettings: () => void }) => {
   const appWindow = getCurrentWindow();
 
   const handleMinimize = () => appWindow.minimize();
@@ -73,7 +74,7 @@ const CustomTitlebar = ({ setMessage }: { setMessage: (msg: any) => void }) => {
 
       <div className="titlebar-controls">
         <button className="titlebar-btn" title="Kullanıcı" onClick={() => setMessage({ type: 'info', text: 'Profil yakında!' })}><User size={18} /></button>
-        <button className="titlebar-btn" title="Ayarlar" onClick={() => setMessage({ type: 'info', text: 'Ayarlar yakında!' })}><Settings size={18} /></button>
+        <button className="titlebar-btn" title="Ayarlar" onClick={onOpenSettings}><Settings size={18} /></button>
         <div style={{ width: '1px', height: '24px', background: '#e2e8f0', margin: '0 8px' }} />
         <button className="titlebar-btn" onClick={handleMinimize}><Minus size={18} /></button>
         <button className="titlebar-btn" onClick={handleMaximize}><Square size={14} /></button>
@@ -135,6 +136,10 @@ function App() {
   const [showGeneralGuide, setShowGeneralGuide] = useState(false);
   const [wizardDevice, setWizardDevice] = useState<Device | null>(null);
   const [initialWizardStep, setInitialWizardStep] = useState<string | undefined>(undefined);
+  const [pendingBrowserDevice, setPendingBrowserDevice] = useState<Device | null>(null);
+  const [browserModeChoice, setBrowserModeChoice] = useState<'extension' | 'standalone'>('extension');
+  const [rememberBrowserPref, setRememberBrowserPref] = useState(true);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // --- Central Routing Configuration ---
   const ROUTING_CONFIG = {
@@ -564,6 +569,38 @@ function App() {
     }
   }, [selectedDevice]);
 
+  // Cihaz değiştiğinde (ör. telefondan tarayıcıya geçildiğinde) veya tarayıcı seçildiğinde
+  // haritada önceden seçili bir konum varsa, bunu yeni seçilen cihaza (özellikle tarayıcıya) anında aktar:
+  useEffect(() => {
+    if (!selectedDevice) {
+      invoke('clear_active_device').catch(() => {});
+      return;
+    }
+
+    invoke('set_active_device', {
+      os: selectedDevice.os,
+      udid: selectedDevice.id,
+      name: selectedDevice.name
+    }).catch(() => {});
+
+    if (selectedDevice.os === 'browser') {
+      const syncLoc = currentLocation || selectedLocation;
+      if (syncLoc) {
+        invoke('set_location', {
+          os: 'browser',
+          udid: selectedDevice.id,
+          lat: syncLoc.latitude,
+          lng: syncLoc.longitude,
+          speed: 0.0,
+          bearing: 0.0,
+          altitude: 100.0
+        }).catch((err) => {
+          console.warn('Tarayıcı otomatik konum senkronizasyonu:', err);
+        });
+      }
+    }
+  }, [selectedDevice?.id, selectedDevice?.os]);
+
   useEffect(() => {
     if (cooldownTime > 0) {
       const timer = window.setInterval(() => { setCooldownTime(prev => Math.max(0, prev - 1)); }, 1000);
@@ -626,6 +663,7 @@ function App() {
         if (!stillConnected && !locationChangeInProgressRef.current) {
           setMessage({ type: 'error', text: '⚠️ Cihaz bağlantısı koptu!' });
           setSelectedDevice(null);
+          invoke('clear_active_device').catch(() => {});
         }
       }
 
@@ -643,6 +681,7 @@ function App() {
     manualDisconnectRef.current = true;
     try {
       await invoke('stop_all_simulations');
+      invoke('clear_active_device').catch(() => {});
       setSelectedLocation(null);
       setStartLocation(null);
       setSelectedDevice(null);
@@ -660,11 +699,49 @@ function App() {
     manualDisconnectRef.current = true;
     try {
       await invoke('clear_location', { os: device.os, udid: device.id });
+      invoke('clear_active_device').catch(() => {});
       if (selectedDevice?.id === device.id) { setSelectedDevice(null); setShowDevicePanel(false); }
       setMessage({ type: 'success', text: `${device.name} bağlantısı kesildi.` });
       await loadDevices();
       setTimeout(() => { manualDisconnectRef.current = false; }, 3000);
     } catch (error) { manualDisconnectRef.current = false; }
+  };
+
+  const connectBrowserWithMode = (device: Device, mode: 'extension' | 'standalone', remember: boolean) => {
+    if (remember) {
+      localStorage.setItem('geoshift_browser_preference', mode);
+    }
+    setPendingBrowserDevice(null);
+    setSelectedDevice(device);
+    invoke('set_active_device', { os: 'browser', udid: device.id, name: device.name }).catch(() => {});
+
+    // Haritada önceden seçilmiş veya mevcut bir konum varsa yeni bağlanan tarayıcıya derhal ilet
+    const syncLoc = currentLocation || selectedLocation;
+    if (syncLoc) {
+      invoke('set_location', {
+        os: 'browser',
+        udid: device.id,
+        lat: syncLoc.latitude,
+        lng: syncLoc.longitude,
+        speed: 0.0,
+        bearing: 0.0,
+        altitude: 100.0
+      }).catch(() => {});
+    }
+
+    if (mode === 'extension') {
+      setMessage({ type: 'success', text: `🌐 ${device.name} (Eklenti Modu) bağlandı! Mevcut açık sekmelerinizde konum anlık senkronize edilecek.` });
+    } else {
+      setMessage({ type: 'info', text: `🌐 ${device.name} GeoShift modunda bağlanılıyor...` });
+      invoke<string>('launch_browser', { browserId: device.id })
+        .then((_res) => {
+          setMessage({ type: 'success', text: `✅ ${device.name} bağlandı! Haritadaki konum canlı olarak tarayıcıya yansıtılacak.` });
+          loadDevices(true);
+        })
+        .catch((e) => {
+          setMessage({ type: 'error', text: `Tarayıcı bağlanamadı: ${String(e)}` });
+        });
+    }
   };
 
   const handleDeviceSelect = async (device: Device) => {
@@ -677,21 +754,30 @@ function App() {
       setTimeout(() => loadDevices(), 200);
     }
     setShowDevicePanel(false);
-    if (device.os === 'ios') { setWizardDevice(device); setShowIOSWizard(true); }
-    else if (device.os === 'android') { setWizardDevice(device); setShowAndroidWizard(true); }
-    else if (device.os === 'browser') {
-      setSelectedDevice(device);
-      setMessage({ type: 'info', text: `🌐 ${device.name} GeoShift modunda bağlanılıyor...` });
-      invoke<string>('launch_browser', { browserId: device.id })
-        .then((_res) => {
-          setMessage({ type: 'success', text: `✅ ${device.name} bağlandı! Haritadaki konum canlı olarak tarayıcıya yansıtılacak.` });
-          loadDevices(true);
-        })
-        .catch((e) => {
-          setMessage({ type: 'error', text: `Tarayıcı bağlanamadı: ${String(e)}` });
-        });
+    if (device.os === 'ios') {
+      invoke('set_active_device', { os: 'ios', udid: device.id, name: device.name }).catch(() => {});
+      setWizardDevice(device);
+      setShowIOSWizard(true);
     }
-    else { setSelectedDevice(device); }
+    else if (device.os === 'android') {
+      invoke('set_active_device', { os: 'android', udid: device.id, name: device.name }).catch(() => {});
+      setWizardDevice(device);
+      setShowAndroidWizard(true);
+    }
+    else if (device.os === 'browser') {
+      const savedPref = localStorage.getItem('geoshift_browser_preference');
+      if (savedPref === 'extension') {
+        connectBrowserWithMode(device, 'extension', false);
+      } else if (savedPref === 'standalone') {
+        connectBrowserWithMode(device, 'standalone', false);
+      } else {
+        setPendingBrowserDevice(device);
+      }
+    }
+    else {
+      setSelectedDevice(device);
+      invoke('set_active_device', { os: device.os, udid: device.id, name: device.name }).catch(() => {});
+    }
   };
 
   const handleWizardComplete = (developerModeEnabled: boolean) => {
@@ -700,6 +786,7 @@ function App() {
       setDevices(prev => prev.map(d => d.id === wizardDevice.id ? { ...d, developerModeEnabled, developerModeChecked: true } : d));
       const updated = { ...wizardDevice, developerModeEnabled, developerModeChecked: true };
       setSelectedDevice(updated);
+      invoke('set_active_device', { os: 'ios', udid: updated.id, name: updated.name }).catch(() => {});
       if (!developerModeEnabled) { setMessage({ type: 'error', text: '⚠️ Developer Mode kapalı.' }); }
       else { setMessage({ type: 'success', text: '✅ iOS cihaz hazır!' }); }
     }
@@ -815,8 +902,14 @@ function App() {
         />
       )}
 
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        setMessage={setMessage}
+      />
+
       <div className={`app-container ${showSplash ? 'app-splash-active' : ''}`} style={{ height: '100%', width: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative', borderRadius: 'var(--radius-lg)', background: 'var(--bg-primary)' }}>
-        <CustomTitlebar setMessage={setMessage} />
+        <CustomTitlebar setMessage={setMessage} onOpenSettings={() => setShowSettingsModal(true)} />
 
         {message && !isLoading && (
           <div style={{ position: 'absolute', top: '68px', left: '50%', transform: 'translateX(-50%)', zIndex: 99998, padding: '10px 18px', borderRadius: '30px', background: 'rgba(15, 23, 42, 0.92)', backdropFilter: 'blur(16px)', color: '#ffffff', border: `1px solid ${message.type === 'success' ? 'rgba(16, 185, 129, 0.4)' : message.type === 'error' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.4)'}`, boxShadow: '0 12px 32px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.88rem', fontWeight: 600 }}>
@@ -905,6 +998,147 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Tarayıcı Bağlantı Tercihi Modalı */}
+        {pendingBrowserDevice && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}>
+            <div style={{
+              background: 'white',
+              borderRadius: '16px',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: '0 20px 50px rgba(0, 0, 0, 0.25)',
+              border: '1px solid #e2e8f0',
+              textAlign: 'left'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <div style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '10px',
+                  background: '#e0e7ff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '20px'
+                }}>
+                  🌐
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#1e293b' }}>
+                    Tarayıcı Bağlantı Yöntemi
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
+                    {pendingBrowserDevice.name} ile nasıl çalışmak istersiniz?
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', margin: '16px 0' }}>
+                {/* Seçenek 1: Eklenti İle */}
+                <div
+                  onClick={() => setBrowserModeChoice('extension')}
+                  style={{
+                    padding: '14px',
+                    borderRadius: '12px',
+                    border: browserModeChoice === 'extension' ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                    background: browserModeChoice === 'extension' ? '#f5f3ff' : '#f8fafc',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 800, fontSize: '0.9rem', color: '#312e81' }}>
+                      🚀 GeoShift Eklentisi İle (Önerilen)
+                    </span>
+                    <span style={{
+                      fontSize: '0.65rem',
+                      fontWeight: 700,
+                      background: '#dcfce7',
+                      color: '#15803d',
+                      padding: '2px 8px',
+                      borderRadius: '999px'
+                    }}>
+                      Yeni Pencere Açmaz
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#4b5563', lineHeight: 1.4 }}>
+                    Ayrı yeni bir pencere açmaz. Mevcut açık sekmelerinizde (Google Haritalar vb.) arka plandan kesintisiz konum değiştirir.
+                  </p>
+                </div>
+
+                {/* Seçenek 2: Ayrı Pencere İle */}
+                <div
+                  onClick={() => setBrowserModeChoice('standalone')}
+                  style={{
+                    padding: '14px',
+                    borderRadius: '12px',
+                    border: browserModeChoice === 'standalone' ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                    background: browserModeChoice === 'standalone' ? '#f5f3ff' : '#f8fafc',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 800, fontSize: '0.9rem', color: '#312e81' }}>
+                      🪟 Ayrı Pencere İle
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#4b5563', lineHeight: 1.4 }}>
+                    Hata ayıklama modunda bağımsız yeni bir tarayıcı penceresi açar.
+                  </p>
+                </div>
+              </div>
+
+              {/* Bu tercihimi hatırla */}
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '0.8rem',
+                color: '#475569',
+                cursor: 'pointer',
+                marginBottom: '20px'
+              }}>
+                <input
+                  type="checkbox"
+                  checked={rememberBrowserPref}
+                  onChange={(e) => setRememberBrowserPref(e.target.checked)}
+                  style={{ width: '16px', height: '16px', accentColor: '#4f46e5' }}
+                />
+                <span>Bu tercihimi hatırla (Bir daha sorma)</span>
+              </label>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => setPendingBrowserDevice(null)}
+                  className="btn btn-secondary"
+                  style={{ flex: 1, height: '42px', fontSize: '0.85rem' }}
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={() => connectBrowserWithMode(pendingBrowserDevice, browserModeChoice, rememberBrowserPref)}
+                  className="btn btn-primary"
+                  style={{ flex: 1.5, height: '42px', fontSize: '0.85rem', fontWeight: 800 }}
+                >
+                  Bağlan
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

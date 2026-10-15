@@ -6,22 +6,39 @@ export default function Splash({ onFinish }: { onFinish: () => void }) {
     const [isFading, setIsFading] = useState(false);
 
     useEffect(() => {
+        // HTML ön yükleyicideki progress'i React'e aktar (süreklilik hissi)
+        const preLoader = document.getElementById('gs-splash');
+        const preFill = document.getElementById('sf');
+        const currentWidth = preFill ? parseFloat(preFill.style.width) || 5 : 5;
+        setProgress(currentWidth);
+
+        // HTML interval'i durdur
+        if ((window as any).__gsIv) {
+            clearInterval((window as any).__gsIv);
+        }
+
+        // HTML splash'ı fading class ile yumuşakça kaldır
+        if (preLoader) {
+            preLoader.classList.add('fading');
+            setTimeout(() => preLoader.remove(), 500);
+        }
+
+        // React progress animasyonu – 100'e ulaşınca kapat
         const interval = setInterval(() => {
             setProgress(prev => {
-                const next = prev + Math.random() * 8;
+                const next = prev + (Math.random() * 5 + 3);
                 if (next >= 100) {
                     clearInterval(interval);
-                    setTimeout(() => setIsFading(true), 1200);
+                    setTimeout(() => setIsFading(true), 200);
                     setTimeout(() => {
-                        // Remove the anti-flicker class right before finishing
                         document.getElementById('root')?.classList.remove('app-splash-active');
                         onFinish();
-                    }, 1800);
+                    }, 600);
                     return 100;
                 }
                 return next;
             });
-        }, 100);
+        }, 80);
 
         return () => clearInterval(interval);
     }, [onFinish]);
@@ -36,17 +53,16 @@ export default function Splash({ onFinish }: { onFinish: () => void }) {
                 right: 0,
                 bottom: 0,
                 background: 'transparent',
-                backdropFilter: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 zIndex: 100000,
-                transition: 'opacity 0.6s ease',
+                transition: 'opacity 0.5s ease',
                 opacity: isFading ? 0 : 1,
                 pointerEvents: isFading ? 'none' : 'auto',
             }}
         >
-            {/* Compact Floating Splash Window (iMyFone Style) */}
+            {/* Floating Splash Card */}
             <div style={{
                 width: '640px',
                 height: '400px',
@@ -61,17 +77,12 @@ export default function Splash({ onFinish }: { onFinish: () => void }) {
                 padding: '30px',
                 position: 'relative',
                 overflow: 'hidden',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-                border: 'none',
+                boxShadow: '0 32px 64px -16px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255,255,255,0.06)',
                 backgroundColor: 'transparent'
             }}>
-                {/* Refined Progress Bar with white color */}
                 <div style={{
                     width: '90%',
                     marginBottom: '15px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
                     zIndex: 2
                 }}>
                     <div style={{
@@ -80,15 +91,14 @@ export default function Splash({ onFinish }: { onFinish: () => void }) {
                         background: 'rgba(255, 255, 255, 0.2)',
                         borderRadius: '5px',
                         overflow: 'hidden',
-                        backdropFilter: 'blur(4px)',
-                        border: '1px solid rgba(255,255,255,0.1)'
+                        border: '1px solid rgba(255,255,255,0.12)'
                     }}>
                         <div style={{
                             width: `${progress}%`,
                             height: '100%',
                             background: '#ffffff',
-                            boxShadow: '0 0 15px rgba(255, 255, 255, 0.6)',
-                            transition: 'width 0.4s cubic-bezier(0.1, 0.5, 0.5, 1)',
+                            boxShadow: '0 0 16px rgba(255, 255, 255, 0.9)',
+                            transition: 'width 0.25s ease',
                             borderRadius: '5px'
                         }} />
                     </div>
